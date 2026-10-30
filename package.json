@@ -1,0 +1,69 @@
+{
+  "name": "dsh-qq-rin",
+  "version": "0.1.0",
+  "description": "凛的 QQ 桥（OneBot v11 反向 WebSocket）。自 dsh-qq-onebot-bridge 衍生的自有插件：去掉了群小游戏/播报/订阅等无关功能，NapCat 相关代码做了精简。",
+  "type": "module",
+  "main": "lib/index.js",
+  "bin": {
+    "qq-control": "./control/bin/qq-control.mjs"
+  },
+  "scripts": {
+    "control": "node control/bin/qq-control.mjs",
+    "test": "node test/control-unit.mjs"
+  },
+  "exports": {
+    ".": "./lib/index.js",
+    "./extension": "./lib/extension.js",
+    "./client": "./client/client.js",
+    "./cordis.patch.yml": "./cordis.patch.yml",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "lib",
+    "client",
+    "control",
+    "test",
+    "docs",
+    "cordis.patch.yml",
+    "README.md"
+  ],
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "cordis",
+    "qq",
+    "onebot",
+    "onebot-v11",
+    "bridge"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-settings"
+      ]
+    },
+    "supportedRuntimeLines": [
+      "0.1",
+      "0.2"
+    ]
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "^4.0.1",
+    "@deepseek-ai/dsh-agent": "^0.1.0-rc.6 || ^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.2.0-rc.2",
+    "@deepseek-ai/dsh-agent-default-model": "^0.1.0-rc.6 || ^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.2.0-rc.2",
+    "@deepseek-ai/dsh-llm": "^0.1.0-rc.6 || ^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.2.0-rc.2",
+    "@deepseek-ai/dsh-session": "^0.1.0-rc.6 || ^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.2.0-rc.2",
+    "@deepseek-ai/dsh-system-prompt": "^0.1.0-rc.6 || ^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.2.0-rc.2",
+    "@deepseek-ai/dsh-tools": "^0.1.0-rc.6 || ^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.2.0-rc.2",
+    "@deepseek-ai/schemastery": "^3.18.1"
+  },
+  "license": "MIT",
+  "author": "someone"
+}

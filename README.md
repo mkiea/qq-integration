@@ -61,7 +61,7 @@ npm install --omit=dev --legacy-peer-deps
 #    link: 装的是符号链接，Node 按**真实路径**解析 import ⇒ `@deepseek-ai/*`
 #    会从插件目录往上找，永远找不到 profile 的 node_modules。
 #    Windows 用目录联接，不需要管理员权限：
-cmd /c mklink /J "<插件目录>\node_modules\@deepseek-ai" "%USERPROFILE%\.dsh\profiles\web\node_modules\@deepseek-ai"
+cmd /c mklink /J "<插件目录>\node_modules\@deepseek-ai" "%USERPROFILE%\.dsh\profiles\<profile>\node_modules\@deepseek-ai"
 ```
 
 ```sh
@@ -83,7 +83,8 @@ dsh plugin --profile web add <本目录>
 
 官方桌面端（Electron 版 `DeepSeek Harness.exe`）跑的是 `~/.dsh/profiles/desktop` 这个 profile，**由应用独占管理**（CLI 会拒绝 `dsh --profile desktop`），它和 CLI 版**共用同一个 DSH 运行时版本**——所以本插件声明的 peer 范围同时覆盖 `^0.1.x` 与 `^0.2.0-rc.2`，两边都能直接装、**不需要 `dsh plugin allow-version` 豁免**。
 
-装法与 web 版一致，只是走桌面端的插件管理界面：
+装法与 web 版一致——**但上面三步里的 `<profile>` 要换成 `desktop`**（目录联接指错 profile 会静默挂错 peer），
+其余只是走桌面端的插件管理界面：
 
 1. 桌面端 → 设置 → 插件 → 安装，选**本地目录**（就是本插件所在的目录，也就是 `dsh plugin --profile web add` 时填的那个路径），或直接填 GitHub 仓库地址；
 2. 配置同样写在 `~/.dsh/profiles/desktop/cordis.patch.yml`（`id: dsh-qq-onebot-bridge` 的 config），不要写进仓库；
@@ -114,9 +115,14 @@ dsh plugin --profile web add <本目录>
 ```sh
 cd <本目录>
 npm install --omit=dev --legacy-peer-deps                # 只装 ws；--legacy-peer-deps 见「安装 / 卸载」
-cmd /c mklink /J "%CD%\node_modules\@deepseek-ai" "%USERPROFILE%\.dsh\profiles\web\node_modules\@deepseek-ai"
-dsh plugin --profile web add <本目录>                     # 注册进 profile（link: 到本目录）
+cmd /c mklink /J "%CD%\node_modules\@deepseek-ai" "%USERPROFILE%\.dsh\profiles\<profile>\node_modules\@deepseek-ai"
+dsh plugin --profile <profile> add <本目录>                # 注册进 profile（link: 到本目录）
 ```
+
+> ⚠️ **`<profile>` 按你用的客户端填**：CLI / Web 版填 `web`；**官方桌面端（DSH Desktop）填 `desktop`**。
+> 这两处目录联接必须指向**你自己那个 profile** 的 `node_modules\@deepseek-ai`——指错 profile 时，
+> 如果那个目录恰好存在，`mklink` 会**成功**，然后把插件挂到另一套 peer 上，症状是启动时才报
+> `Cannot find package` 或者版本对不上的怪错误。桌面端的安装入口见下面「官方桌面端」一节。
 
 > 第 2 行那个目录联接是**必须**的，漏了会这样：宿主启动时 `Cannot find package '@deepseek-ai/schemastery'`。
 > 原因：`link:` 装的是符号链接，Node 按**真实路径**解析 import，官方 peer 从插件目录往上找永远找不到 profile 的 `node_modules`。

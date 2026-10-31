@@ -42,23 +42,42 @@ QQ 客户端 ←→ OneBot 实现（Waylay〔当前默认〕/ NapCat / LLOneBot 
 
 ## 安装 / 卸载
 
+本地目录安装走 pnpm 的 `link:`（跟本机 `dsh-forge` 一致）：profile 的
+`node_modules/dsh-qq-onebot-bridge` 是一个**符号链接**，指回插件目录 ⇒ **仓库就是运行时**，改完即生效（重启宿主后）。
+三步，缺一步都会在启动时炸，而且炸法不一样：
+
 ```sh
-
-# 安装（本地目录）：先在被安装的目录里装运行时依赖，再注册插件
-
-# 本地目录走 pnpm 的 link:，不会自动安装被链接包自己的依赖（ws）
-
-cd <本目录> && npm install --omit=dev
-dsh plugin --profile web add <本目录>
-
-# 卸载（随时可移除，独立 bundle 不影响其它插件）
-
-dsh plugin --profile web remove dsh-qq-onebot-bridge
+# 1) 插件目录自己的运行时依赖（只有 ws）
+cd <插件的绝对路径>
+npm install --omit=dev --legacy-peer-deps
 ```
+
+> `--legacy-peer-deps` 不是美化选项：`peerDependencies` 里七个 `@deepseek-ai/dsh-*` 各有区间，
+> npm 会**先把整棵树解出来再裁掉 peer**，区间对不上就 `ERESOLVE` 直接失败（加 `--omit=peer` 也拦不住，
+> 亲测）。pnpm 那边靠 `autoInstallPeers: false` 天然不装，npm 只能用这个开关。
+
+```sh
+# 2) 让插件目录自己能看见官方 peer（最容易漏的一步）
+#    link: 装的是符号链接，Node 按**真实路径**解析 import ⇒ `@deepseek-ai/*`
+#    会从插件目录往上找，永远找不到 profile 的 node_modules。
+#    Windows 用目录联接，不需要管理员权限：
+cmd /c mklink /J "<插件目录>\node_modules\@deepseek-ai" "%USERPROFILE%\.dsh\profiles\web\node_modules\@deepseek-ai"
+```
+
+```sh
+# 3) 注册到 profile（`dsh plugin --profile web add <目录>` 会替你做这一步）
+#    写进 ~/.dsh/profiles/web/package.json：
+#      "dsh-qq-onebot-bridge": "link:C:/…/qq-integration"
+dsh plugin --profile web add <本目录>
+```
+
+卸载：`dsh plugin --profile web remove dsh-qq-onebot-bridge`（随时可移除，独立 bundle 不影响其它插件）。
 
 装/卸后重启 `dsh web` 生效。
 
-> 官方依赖（`@deepseek-ai/dsh-*`、`@deepseek-ai/schemastery`）声明为 `peerDependencies`，由 DSH 随 profile 一起装好，插件目录里不需要重复安装。
+> 官方依赖（`@deepseek-ai/dsh-*`、`@deepseek-ai/schemastery`）声明为 `peerDependencies`，由 DSH 随 profile 一起装好，插件目录里不需要重复安装——但第 2 步的**联接**要建，那是让真实路径也能看见它们。
+>
+> ⚠️ **别用 `git+https://…` 装本插件**：pnpm 会把版本钉在某个 commit 上，`pnpm install` 一跑就把运行时换回那个 commit，**你本地的改动无声消失**。要装远端就明确 pin 到你要的 tag。
 
 ### 官方桌面端（DSH Desktop）
 
@@ -94,9 +113,13 @@ dsh plugin --profile web remove dsh-qq-onebot-bridge
 
 ```sh
 cd <本目录>
-npm install --omit=dev                                   # 本地目录安装必需（ws 不会被 link 过去）
-dsh plugin --profile web add <本目录>                     # 注册进 profile
+npm install --omit=dev --legacy-peer-deps                # 只装 ws；--legacy-peer-deps 见「安装 / 卸载」
+cmd /c mklink /J "%CD%\node_modules\@deepseek-ai" "%USERPROFILE%\.dsh\profiles\web\node_modules\@deepseek-ai"
+dsh plugin --profile web add <本目录>                     # 注册进 profile（link: 到本目录）
 ```
+
+> 第 2 行那个目录联接是**必须**的，漏了会这样：宿主启动时 `Cannot find package '@deepseek-ai/schemastery'`。
+> 原因：`link:` 装的是符号链接，Node 按**真实路径**解析 import，官方 peer 从插件目录往上找永远找不到 profile 的 `node_modules`。
 
 装完**必须**确认 `~/.dsh/profiles/web/package.json` 里已经有
 
@@ -516,7 +539,7 @@ if (api.instanceId !== lastInstanceId) { lastInstanceId = api.instanceId; reRegi
 
 node test/control-unit.mjs        # 也可以逐个跑：node test/<name>-unit.mjs
 
-#    65 个 *-unit.mjs（4157 条断言）：桥的分支/命令/守卫、控制台 HTTP 与体检、录制回放与注入、注入安全边界、硬约束验收台、
+#    66 个 *-unit.mjs（4226 条断言）：桥的分支/命令/守卫、控制台 HTTP 与体检、录制回放与注入、注入安全边界、硬约束验收台、
 
 #    `/为什么` 的决策链翻译（why-unit）…
 
@@ -538,22 +561,30 @@ node test/replay-live-host.mjs --token <控制台 token>   # 录制 → 离线�
 老版本的 `sim-*.mjs` 协议模拟脚本保留在 `test/` 下，仍可用于手工排查（`node test/sim-group.mjs` 等，需宿主运行）。
 语音转文字链路建议直接用 QQ 实测（模拟脚本需真实 STT 调用）。
 
-### 在哪跑测试（这件事踩过）
+### 在哪跑测试（这件事踩过两次，说法变过）
 
-**仓库里跑不起来**：仓库只有 git，没有 `node_modules`，`node test/*.mjs` 会立刻
+**现状（2026-10-31 起）：在仓库里跑。** 依赖换成 `link:` 之后，仓库就是运行时，
+按上面「安装」三步做完 `node_modules` 就在仓库里，`node test/settings-unit.mjs` 直接可用。
+
+**第一次踩**：仓库只有 git、没有 `node_modules`，`node test/*.mjs` 立刻
 `ERR_MODULE_NOT_FOUND: @deepseek-ai/dsh-llm`，**整批套件崩**（环境问题，不是代码坏了）。
-测试要跑在**运行时副本**（dsh 真正加载的那份，`~/.dsh/profiles/web/node_modules/dsh-qq-onebot-bridge`）。
+当时的结论是"只能在运行时副本里跑"——那条结论现在已经不成立。
 
-两份副本靠手工维持会漂（2026-10-31 实际漂过：仓库落后运行时 11 分钟、9 个文件，
-`dataDir` / `funEnabled` 的改动全只在运行时那份里，仓库一个字节都没有）。所以用脚本守恒：
+**第二次踩**（同一天，换成 link 之后）：`link:` 只解决了 `ws`，**没解决 peer**。
+插件目录能 `import('ws')`，却 `Cannot find package '@deepseek-ai/schemastery'`——
+因为 Node 按**真实路径**解析 import，`@deepseek-ai/*` 从仓库往上找永远找不到 profile 的 `node_modules`。
+这次不是"跑不了测试"而是"宿主启动就崩"，修法就是安装第 2 步那个目录联接。
+
+`tools/sync-runtime.mjs` 还留着，但它现在只对**装成两份**的机器有意义；
+link 之后它会**明确告诉你"运行时目录就是仓库本身，没有可同步的东西"**，
+而不是拿自己跟自己比、输出一个"162 个文件全部一致"的假安全感（这条有测试钉着，见 `test/sync-tool-unit.mjs`）。
 
 ```sh
-node tools/sync-runtime.mjs            # 仓库 → 运行时（只拷有差异的文件，只拷不删）
-node tools/sync-runtime.mjs --check    # 只比对不写；不一致退出码 1（适合串到脚本里）
-cd ~/.dsh/profiles/web/node_modules/dsh-qq-onebot-bridge && node test/settings-unit.mjs
+node tools/sync-runtime.mjs --check    # 一份活副本时：如实说"无事可做"；两份时：不一致退出码 1
 ```
 
-比对**忽略 CRLF**：仓库是 LF、运行时是 CRLF（git `core.autocrlf`），按字节比会把每个文件都报成有差异。
+比对**忽略 CRLF**：老配置里仓库是 LF、副本是 CRLF（git `core.autocrlf`），按字节比会把每个文件都报成有差异。
+仓库现在有 `.gitattributes` 固定 `eol=lf`，新检出不会再有这个问题。
 
 ## 记忆与人设说明（重要）
 

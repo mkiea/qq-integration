@@ -235,3 +235,41 @@ profile patch 读不到 / 读坏了**当没配**（控制台不能因为配置�
 
 推送前核对过：161 个受版本控制的文件里没有个人绝对路径、没有密钥、没有真实 QQ 号；
 `qq-control.json`（本机配置）与 `qq-*`（运行时产物）都不在库内。两副本 `--check` 一致（160 个文件）。
+
+**⑭ 依赖改成 `link:`（跟 `dsh-forge` 一样）：从"两份副本"回到"一份"（2026-10-31）**
+
+用户原话：「跟 forge 一样吧」。profile 的依赖从
+`git+https://github.com/cheesehaqi/dsh-qq-onebot-bridge.git` 改成
+`link:C:/Users/someone/Desktop/chat role/qq-integration`；
+`pnpm-lock.yaml` 里那条 pin 在 `#c59ca8f` 的记录随之消失，`pnpm-workspace.yaml` 里带提交号的
+`allowBuilds` 旧条目一并删掉。
+
+**为什么值得改**：改之前，下一次 `pnpm install` 会把运行时副本整体换回上游 0.7.22，
+**我们所有改动无声消失**，而界面上没有任何提示。这是项目里唯一一条"只要别人敲一条常规命令就全没了"的隐患。
+
+**顺手做对的三件事**：
+
+1. **迁走运行时目录里的私货**：`qq-control.json`（含 QQ 号与控制台 token）与 `_tmp/backups/`
+   原本只存在于运行时那份里，link 之后那个目录会变成符号链接、内容随之消失。
+   已先备份到 `qq_chat/_local-patch/backup-runtime-20261031-1237/`，再复制进仓库并加进 `.gitignore`。
+2. **`npm install` 的真实姿势**：`--omit=dev` 会 `ERESOLVE` 失败——npm 先把整棵树解出来再裁 peer，
+   七个 `@deepseek-ai/dsh-*` 的区间对不上（加 `--omit=peer` 也拦不住）。可用的是
+   `npm install --omit=dev --legacy-peer-deps`，只装 `ws` 一个包。
+3. **`link:` 之后 peer 必须另有出路**：`link:` 装的是符号链接，Node 按**真实路径**解析 import ⇒
+   从仓库往上找永远找不到 profile 的 `node_modules`，宿主启动直接
+   `Cannot find package '@deepseek-ai/schemastery'`（`import('ws')` 却是好的，所以特别容易误判成"依赖装好了"）。
+   修法：在插件目录建一个目录联接 `node_modules\@deepseek-ai` → profile 的 `node_modules\@deepseek-ai`（不需要管理员）。
+   `dsh-forge` 能工作也是因为它自己有一份 `node_modules`。
+
+**连带抓到两个量具缺陷**（都是"看着通过、其实没测"的那类）：
+
+- `tools/sync-runtime.mjs` 的 `collectFiles()` **只给目录加了白名单，文件没有**：仓库根一旦出现
+  `qq-control.json` / `qq-trace.jsonl`，同步就会把它们拷进**包目录**——等于把 QQ 号和消息原文
+  搬进要被分发的地方。已给顶层文件同样加白名单。
+- link 之后"运行时副本"就是仓库本身，`--check` 于是输出"162 个文件内容一致"——**拿自己跟自己比**。
+  已加 `isSameDir()`：同一目录时明确打印「运行时目录就是仓库本身（link: 安装）⇒ 只有一份活副本，
+  没有可同步的东西」，并且一个文件都不比。
+
+**测试位置也变了**：以前"只能在运行时副本跑"，现在仓库里有 `node_modules`，直接在仓库跑。
+新增 `test/sync-tool-unit.mjs`（14 条）专门守住上面两个缺陷 + 白名单 / CRLF 口径 / 只拷不删 / 环境变量覆盖。
+全量 **66 套件 / 4226 条断言，0 失败**。

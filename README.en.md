@@ -33,13 +33,24 @@ QQ client ←→ OneBot implementation (Waylay [current default] / NapCat / LLOn
 
 ```sh
 
-# install (local directory): install the runtime dependency inside the directory first,
-
-# then register the plugin — a local directory is linked with pnpm's `link:`, which does
+# install (local directory): a local directory is linked with pnpm's `link:`, which does
 
 # not install the linked package's own dependencies (`ws`)
 
-cd <this-directory> && npm install --omit=dev
+cd <this-directory> && npm install --omit=dev --legacy-peer-deps
+
+# `--legacy-peer-deps` is not cosmetic: npm resolves the whole tree before pruning peers,
+
+# and the seven `@deepseek-ai/dsh-*` ranges conflict, so plain `--omit=dev` fails with ERESOLVE.
+
+# The linked directory also needs to see the official peers on its **real path**,
+
+# because Node resolves imports from the real path, not the symlink path:
+
+#   cmd /c mklink /J "<this-directory>\node_modules\@deepseek-ai" "%USERPROFILE%\.dsh\profiles\web\node_modules\@deepseek-ai"
+
+# Without that junction the host dies at startup with "Cannot find package '@deepseek-ai/schemastery'".
+
 dsh plugin --profile web add <this-directory>
 
 # uninstall anytime (independent bundle, does not affect other plugins)
@@ -48,6 +59,8 @@ dsh plugin --profile web remove dsh-qq-onebot-bridge
 ```
 
 Restart `dsh web` after install/uninstall.
+
+> ⚠️ **Do not install this plugin from `git+https://…`**: pnpm pins the resolved commit, so the next `pnpm install` silently replaces the runtime copy with that commit and **your local changes disappear without any error**.
 
 > Official dependencies (`@deepseek-ai/dsh-*`, `@deepseek-ai/schemastery`) are declared as `peerDependencies` and installed by DSH together with the profile; they do not need to be installed inside the plugin directory.
 

@@ -21,3 +21,10 @@
 /qq-control.json
 .env
 .env.*
+
+# 本地临时目录（`_tmp/backups/` 里是改坏了要回滚用的旧文件，不是源码）。
+/_tmp/
+
+# npm 生成的锁文件：本 profile 是 **pnpm workspace**，它不读这个文件；
+# 留在这儿只会和 package.json 的 `ws` 版本各说各话。
+package-lock.json

@@ -155,15 +155,19 @@ check('凡 schema 里带 apiKey/baseUrl/provider/model 的开关都标了依赖'
  *   （布尔）+ `proactiveUsers`（名单），总数 91 → **94**、开关 72 → 74、名单 3 → 4。
  *   起因同上：`proactiveUsers` 此前面板 0 行、快照 0 键，用户问"定时发送怎么只发给我"，
  *   答案在配置里写着，他却没有任何界面能看见。**功能在跑但范围不可见，等于没配置。**
+ * 2026-10-31（红队 K②/N④ 之后）：语音容器 `ttsVoiceFormat`（下拉：silk/mp3）进面板，
+ *   总数 94 → **95**、下拉 1 → 2。
+ *   起因：QQ 9.9.36 不再自动把 mp3 转 silk，"发不出语音"的根因藏在容器格式里而**没有任何界面能看见** ——
+ *   和 `proactiveUsers` 同一种病。
  */
-check('依赖分布合理（开箱即用与需准备兼有；总数 94 = 74 开关 + 12 数值 + 1 时段 + 4 名单 + 1 下拉 + 2 文本）',
+check('依赖分布合理（开箱即用与需准备兼有；总数 95 = 74 开关 + 12 数值 + 1 时段 + 4 名单 + 2 下拉 + 2 文本）',
   allRows.filter((entry) => entry.needs === '').length >= 5
   && allRows.filter((entry) => entry.needs !== '').length >= 20
-  && allRows.length === 94
+  && allRows.length === 95
   && boolRows.length === 74 && numRows.length === 12
   && allRows.filter((entry) => entry.type === 'times').length === 1
   && allRows.filter((entry) => entry.type === 'list').length === 4
-  && allRows.filter((entry) => entry.type === 'select').length === 1
+  && allRows.filter((entry) => entry.type === 'select').length === 2
   && allRows.filter((entry) => entry.type === 'text').length === 2,
   `开箱即用 ${allRows.filter((entry) => entry.needs === '').length} / 需准备 ${allRows.filter((entry) => entry.needs !== '').length} / 共 ${allRows.length}`)
 check('生图/语音这些"要装东西"的功能，说明里点明了需要什么',

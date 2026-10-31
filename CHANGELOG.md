@@ -566,5 +566,163 @@ allowUsers:     [331****, 215****, 283****, 336****]
 要不要把另外两个号加进 `proactiveUsers`，是主人的决定（每个号都意味着她可能半夜
 主动开一条新会话）；本版不替用户改配置。
 
+**后续（同晚）**：主人拍板「就私聊能主动说即可，配置早就写好了」。取证五份
+`.bak-*` 备份（10-27 至 10-31）确认 `proactiveUsers` 历史上一直是 `[331****]`、
+**没有被覆盖的痕迹**——"以前是全开的"是错觉。按主人决定把名单**清空为 `[]`**：
+空 = 不过滤，候选退化为「白名单 ∩ 有过会话的私聊」，以后新加白名单用户自动纳入、
+不用双处维护。写入走 `upsertPatchValue` + tmp 原子替换 + js-yaml 回读二次确认
+（脚本从宿主 profile 的 `node_modules` 解析 js-yaml——它不是本插件依赖，仓库里
+没有，第一版 `-e` 内联脚本因此在写盘前中止、未动原文件）。patch 里的旧注释
+（"只准主动找主号一个人"）同步改写。**需重启宿主生效**（schema 里该键声明
+`Needs a restart`）。回滚：`cordis.patch.yml.bak-proactive-users-103117`。
+
 全量 **69 套件 / 4305 条断言，0 失败**。改的是 `lib/panel.js` 与快照键集：
 **重启宿主 + 刷新控制台**后生效。
+
+**⑲ 红蓝对抗手册（2026-10-31 晚）**
+
+主人：「写一份详细的对抗测试文档，让红方知道需要攻击什么，你是蓝方需要防守」。
+
+新增 `docs/REDTEAM.md`（377 行），把 10-29 三轮红队的经验固化成**可长期复用**的作战文档，
+而不是又一轮一次性脚本：
+
+- **§0 规则先定「怎么算赢」**：BREAK / PARTIAL / HELD / NO-OP 四种判定，每种都要求落盘证据。
+  静默失败判红方赢；蓝方不许改判据结案（round2 的 I② 就吃过这个亏）。
+- **§1 资产按「红方该抢什么」排序**：会话身份 > 本机文件 > 管理员权限 > 出网 > 群治理 >
+  可用性 > 配置完整性 > 可观测性。A6/A8 与 A1 等权——「她一句话都说不出来且不报错」是
+  真实发生过的。
+- **§2 五类攻击者画像 P1–P5**（网页访客 / 群内陌生人 / 第三方机器人 / 本机进程 / 供应链）。
+  每条攻击必须声明属于哪类，否则「攻破」没有意义。
+- **§4 攻击清单 64 条（J–T 组，新开，不与 A–I 撞车）**：连接层 9 / 出网 7 / 入站路径 5 /
+  提示词注入 10 / 出站 DLP 8 / 权限 8 / 主动开口 6 / 持久化 7 / 供应链 4。每条给
+  目标·前提·手法·**客观判据**·现防线。
+- **§5 防线台账 D1–D22**：每条写位置、**失效条件**、覆盖它的测试。
+- **§6 已知缺口 G1–G13**：蓝方主动交出去的，红方优先打这里。
+- **§7 与历史轮次对照**，避免代号撞车（纪律：不重编号，加限定词）。
+
+写文档时顺带核实出两处值得记的事：
+
+1. **Origin 闸只解决 P1 浏览器，完全不解决 P4 本机进程** —— 原生 ws 客户端不发 Origin，
+   和 NapCat 长得一模一样。所以 `accessToken` 默认空 = 本机任何进程都能冒充任何 QQ 用户。
+   这不是理论风险，是默认配置的现状（G1）。
+2. **`sameSiteGuard` 查到 10 处调用点，但没有清单能证明写路由已全覆盖** —— 这条被列为
+   J⑨「最值得打的一条」，因为它和 S2/S4/S5 是同一个形状：同一套策略只盖住部分入口，
+   而缺失的地方不报错。
+
+`test/privacy-unit.mjs` 40/40（文档里无真实号/密钥，示例统一用 1001/2002；
+唯一的 7 位以上数字是 `2130706433`，那是 127.0.0.1 的十进制写法，攻击示例用）。
+
+**⑳ 红队第四轮（J–T 组）修复（2026-10-31 夜）**
+
+红队按 `docs/REDTEAM.md` 打了 64 条里的一批，交回 **BREAK 5 组（6 条）**。
+逐条核实后全部成立，本轮修其中 3 组（K/N/L），并补了对应回归。
+
+**① K②/K⑤ —— 我上次修漏的第四条下载路径**（最打脸的一条）
+
+10-31 早些时候把「入站媒体 / get_file 回退 / 群文件」三处收进 `fetchGuarded`，
+当时写的是「抽一个函数，不是三处补丁」。**但没做覆盖率审计**，于是漏掉了 `downloadTo()`
+—— 第 4 条独立路径，被 6 个调用点共用（关键词配图 / OCR / 引用图 / 转发图 / …）。
+红队用它打穿了：302 跳到云元数据地址仍被真实请求、5 MiB 整包落盘。
+
+修法是**把所有外部输入 URL 的下载一次收干净**：
+
+- `downloadTo`（图片，16 MiB 上限）
+- 语音 url 下载（10 MiB）
+- 视频下载（沿用 `videoMaxBytes`）
+- `faces.addRemoteImage`（表情包 —— 这条**连白名单都没有**）
+- `cardlook` 三处（getJson / 字幕 / 封面，卡片链接是外部输入）
+
+为此给 `fetchGuarded` 补了三个能力（都是调用方真实需要，不是想象出来的）：
+
+- `headers` 选项（B 站接口要 Referer/UA）
+- 返回值带 `contentType`（`downloadTo` 靠它猜扩展名）
+- **非 2xx 时把响应体前 200 字节带进错误** —— 这条是必须的：上层靠 QQ 返回的
+  `{"retmsg":"invalid rkey"}` 决定「这张图废了，去 get_image / 本地缓存另找一条」。
+  只抛 `HTTP 400` 会把那条回退**静默打断**，表现为「她看不见图」且不报错。
+  读 body 用 reader 只取一块就 cancel，避免恶意 400 带 10GB。
+
+**② N④ —— 管理直发绕过 DLP**：`!say` 原先直接 `server.sendText`，而 `!moment` 走
+`#outboundText`。同一个洞的第二次出现（策略挂在一个出口上）。现在 `!say` 也过 DLP，
+`block` 档直接拒发。
+
+**③ N⑦ —— 文件名不过 DLP**：同一串 key 走正文会被 decoy 替换（红队实测有效），
+走文件名则原样进 QQ。`#sendFileTo` 现在对**实际发出去的文件名**做 `scanSecrets`：
+`block` 拒发、其余档用替换结果（并回退到 basename，防止替换物带出路径分隔符）。
+
+**④ L① —— 入站任意路径读取**（红队实测能读 `.ssh` 内容并改名落盘）
+
+抽了 `lib/inbound-path.js`（`checkInboundLocalPath`），规则：
+
+- **默认拒绝所有绝对路径**（`inboundLocalPathRoots` 空 = 全拒）。
+  敢这么定是因为本机 1215 条真实入站帧的 `file` **全是纯文件名**，这条分支在正常流量下
+  从未执行过 —— 关掉不打死任何正常功能。
+- 要放开必须显式配目录，且**realpath 后做前缀校验**（`..` 与 junction 都穿不过去，
+  这条用真实 junction 测过）。
+- 拒绝**不静默**：写 `debugLog` + `qq-events.log` 的 `inbound-path-refused`（带 reason）。
+
+**新增测试 3 个（54 条）**
+
+- `test/egress-coverage-unit.mjs`（21）—— 一半测行为（错误带 retmsg / contentType / headers /
+  302 第二跳被拒），一半测**接线**（静态扫描 `lib/`：`downloadTo`、`faces`、`cardlook`
+  里不许再出现裸 `await fetch(`；同时反向对照 `tts.js` 仍可裸 fetch，因为那是主人配的服务地址）。
+  这一半是粗的，但正因如此，下次谁顺手写一条裸 fetch 会立刻变红。
+- `test/inbound-path-unit.mjs`（16）—— 默认全拒、根内放行（反向对照，防"全拒"假实现）、
+  `..`、junction 穿越、缺文件与未配置的理由要能区分。
+- `test/voice-silk-unit.mjs`（17）—— 见 ⑲。含「SILK 体积必须小于源 mp3」这条防假转码断言。
+
+**settings-unit 断言更新**：面板加 `ttsVoiceFormat` 后 `PANEL_FLAT_ROWS` 94 → **95**、
+下拉 1 → **2**。数字不是猜的：直接 import panel 统计得到
+`95 = 74 开关 + 12 数值 + 1 时段 + 4 名单 + 2 下拉 + 2 文本`。
+
+**⚠️ 事故记录（如实写）**：这轮在仓库根跑 `npm install silk-wasm` 时，npm **顺着
+`node_modules/@deepseek-ai` 这个指向宿主 profile 的符号链接**，把 profile 的
+`@deepseek-ai` 目录清空了。已用 `pnpm install --offline` 按 profile 自己的 lock 重建
+（中途卡在被占用的 `@img/sharp-win32-x64`，挪开一次才走通），`node tools/doctor.mjs --install`
+现在 **8/8 PASS**。教训：**这个仓库的 node_modules 里有指向宿主的链接，绝不能在里面跑 npm install**。
+残留 3 个 `*_tmp_*` / `.hold` 占位目录被宿主占用删不掉（无害，重启后可清）。
+
+**仍需在完整 peer 环境验证**：`settings-unit` / `inject-guard-unit` 依赖
+`@deepseek-ai/schemastery` 的真实实现，本机 shim 是假的（`z.string is not a function`），
+这两套**本轮未能执行** —— 记为未验证，不是通过。
+
+**㉑ 语音发不出去：SILK + pttElement 两层（2026-10-31 深夜，实测通过）**
+
+用户报「发不出来语音」。查下来是**两层叠加**，第一层在我们仓库，第二层在注入层。
+
+**第一层：QQ 只认 SILK（本仓库已修）**
+
+QQ 的语音缓存文件头必须是 `\x02#!SILK_V3`。旧版 QQ 会自动把 mp3 转 silk
+（缓存体积缩到源文件 ~40%）；**9.9.36 起不再转**，直接原样塞进 `Ptt/` 目录，
+然后在 NTQQ 内部崩掉：`retcode 1400 / Cannot convert undefined or null to object`。
+那句错误**完全看不出是格式问题**——只能靠对比缓存文件头发现。
+
+- 新增 `lib/silk.js`：ffmpeg 转 wav(24k 单声道) → `silk-wasm` 编码。
+  实测 3.19 秒语音 → 10601 字节、**105ms**，产物与 QQ 自己缓存的 silk **前 20 字节逐字节相同**。
+- `silk-wasm` 放进 **optionalDependencies**：没装就返回 null、照旧发 mp3（老版本 QQ 仍收），
+  不会因为缺一个包让她彻底不能发语音。
+- 新增配置 `ttsVoiceFormat`（默认 `silk`，面板「语音·让她能发」下方一行，下拉）。
+  `ttsEnabled` 仍必须是 false（它是"每条回复都复读一遍"的复读机开关）。
+- `voiceToolEnabled` 补进运行快照（之前它**不在** features 里，属于「功能在跑但不可见」）。
+- `test/voice-silk-unit.mjs`（17 条）：判据正反都验，含「SILK 体积必须小于源 mp3」
+  这条防「改个扩展名假装转码」的断言。
+
+**第二层：pttElement 缺字段（在注入层，不在本仓库）**
+
+换成 `.silk` 后**报的还是同一个错**。打出来的 elements shape 显示原有 13 个字段
+**都有值、类型也对** ⇒ 不是"某字段 undefined"，而是 NTQQ 要一个我们没有的字段。
+对照 NapCat 的字段表（15 个），缺的是 `storeID` 与 `otherBusinessInfo`，
+而 `otherBusinessInfo` 是 **object** —— 给它 undefined，一展开就抛那句话。
+
+补上后实测：
+
+```
+sendMsg result: {"result":0,"errMsg":""}     ← 0 = 成功
+桥侧: agent voice sent (5408 bytes)
+```
+
+⚠️ 这一层的补丁在 `_tmp/rin-inject/waylay-src`（本地副本，**不进本仓库**），
+重注入会被覆盖 ⇒ 固化成 `_tmp/rin-inject/_fix-ptt.cjs`（幂等，重注入后跑一次）。
+
+**方法论（这轮最值得记的）**：「改了 A 之后还是坏」**不等于 A 没修对**。
+silk 这一层确实修对了（文件头逐字节相同），坏在下一层。不做这个对比，
+很容易反过来把 silk 那层再改一遍，越改越乱。

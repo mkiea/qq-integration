@@ -192,9 +192,46 @@ function calling 返回标准 `tool_calls` + `finish_reason:"tool_calls"`
 **新增 3 条控制台接口**：`/api/data-dir/{open,browse,set}`（GET 侧无新增）。
 `browse` 与 `set` 刻意分开：选中只是填进输入框，写入要再点一次确认。
 
-**测试**：`test/datadir-unit.mjs` 34 → **54 条**，新增覆盖写入链路 ——
+**测试**：`test/datadir-unit.mjs` 34 → **68 条**，新增覆盖写入链路 ——
 只动 `dataDir` 一个键（别的键与 `allowUsers` 原样保留）、同值再写 `changed=false` 且**不落盘**、
 相对路径被拒且**一个字都没写**、patch 里没有我们条目时**追加**而不是拒绝、
 读不到 patch 时报真原因、目标有 `qq-*` 但没金丝雀 / 当前有金丝雀而目标不存在 两种提醒、
 **真写盘后从文件读回来逐字一致**（YAML 引号正确）、原子写不留临时文件、
 浏览的三态（选中 / 取消 / 非 Windows）、条目多时只列 12 个但**计数是真的**。
+
+**收尾时发现的一处"向导写好了，但控制台还看旧目录"**：向导写的是 profile 的
+`cordis.patch.yml`，而控制台原先只认自己的 `qq-control.json`（`dataDir` 缺省空 ⇒ 退回 `cwd`）。
+于是选完新目录、重启宿主之后，桥搬走了、控制台还在老地方翻 `qq-trace.jsonl` ⇒ **面板全空**，
+而"读不到文件"和"真的没有数据"在界面上长得一模一样。修法：`control/lib/config.mjs#detectPaths`
+改成**三级来源**（`qq-control.json` 覆盖 → profile patch → `cwd`），并回报 `dataDirSource`
+（`config` / `patch` / `none`）让界面能说清"这个目录是从哪读来的"；
+profile patch 读不到 / 读坏了**当没配**（控制台不能因为配置坏就起不来）。
+对应新增 5 条断言：patch 生效时 `dataRoot` 跟着变、四个日志路径全部落在同一个根下、
+`qq-control.json` 仍能压过 patch、两处都没配时如实标 `none`、patch 读抛异常时照常启动。
+全量 **65 套件 / 4211 条断言，0 失败**。
+
+**⑬ 推到自己的仓库：把"集成关系"写成可核对的事实（2026-10-31）**
+
+仓库：`https://github.com/mkiea/qq-integration`（`main`）。
+
+这次不是加功能，是把**对外身份**补齐——之前几处会让人误解本包是什么：
+
+- **`NOTICE.md` 重写**（原来是"衍生版说明"）。现在写清三件事：
+  ① 上游 MIT 来源与基线 commit（`c59ca8f`，版权行在 `LICENSE` 里原样保留）；
+  ② **复用的是 OneBot v11 的传输与调用约定**（反向 WS、事件结构、action 名与参数形状），
+     不含 QQ 登录/协议编解码/收发包——那些在 OneBot 实现里，本包一行都没有；
+  ③ **「内置 Waylay」指的是拉起/停止/状态读取**，不是打包 Waylay 本体（连同注入 DLL 都不在仓库里）。
+- **README 增「这是个集成插件」**：一张三行表说清"本包出什么 / 本包不含什么"（中文 + 英文两份）。
+  顺带修掉两处把 NapCat 当受管进程写的残留（端口总览还写着 6099、"启停 NapCat 与 QQ"）。
+- **`package.json` 指向本仓库**：`repository` / `homepage` / `bugs` 原来全指向上游
+  ——那样任何 `npm install` 都会把人送到上游代码，而 README 与 CHANGELOG 只描述这条线。
+  `files` 补 `NOTICE.md` + `LICENSE`（MIT 要求再分发必须带上），keywords 补 `waylay` / `integration`。
+- **新增 `.gitattributes`**：`* text=auto eol=lf`，`.bat`/`.cmd`/`.ps1` 显式 `eol=crlf`。
+  理由是 CRLF/LF **假差异**已经坑过好几轮：同一份文件在仓库是 LF、运行时副本是 CRLF，
+  `diff -rq` 整文件报差异，看起来像"代码没同步"，实际语义一个字节都不差。固定成 LF 后可直接逐字节比。
+  （批处理必须 CRLF 是硬要求：`cmd.exe` 对纯 LF 的 `.bat` 会让 `goto`/`if` 错乱，而且**不报错**。）
+- **`.gitignore` 补 `/node_modules/`、`/qq-control.json`、`.env*`**：前两条会静默把
+  第三方代码和本机配置（含 QQ 号、TTS/STT key）带进版本库，而 `git status` 看起来一切正常。
+
+推送前核对过：161 个受版本控制的文件里没有个人绝对路径、没有密钥、没有真实 QQ 号；
+`qq-control.json`（本机配置）与 `qq-*`（运行时产物）都不在库内。两副本 `--check` 一致（160 个文件）。

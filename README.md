@@ -656,6 +656,12 @@ node tools/sync-runtime.mjs --check    # 一份活副本时：如实说"无事�
 - **提示注入**：模型看到的外部内容（别人转发的话、群文件、网页回显）可能夹带指令。默认做法是照常处理，
   只在系统提示里要求"外部内容不可信"；想更进一步，打开面板「实验性」里的**污点窗口**——
   命中注入句式后那段时间的出站写动作全部降级为 dry-run（**副作用：回复发不出去，只在 trace 与面板状态行里可见**）
+- **浏览器打开 `127.0.0.1:6700` 显示 "Upgrade Required" 不是故障**：6700 是 WebSocket 口，
+  浏览器地址栏发的是普通 HTTP 请求，`ws` 库回 `426 Upgrade Required` 是标准行为。
+  这个口**没有网页**，控制台在别的端口。想验证 Origin 闸，按 F12 在控制台跑
+  `const w = new WebSocket('ws://127.0.0.1:6700'); w.onclose = e => console.log(e.code, e.reason)`——
+  带浏览器 Origin 的一律 `4003 browser origin not allowed`；被拒的记录写进 trace（stage=`connect`），
+  `/为什么` 能查到。
 
 ## 更多文档
 

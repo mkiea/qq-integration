@@ -1,11 +1,26 @@
-# dsh-qq-onebot-bridge
+# qq-integration（QQ 集成接入）
 
-QQ ↔ DeepSeek Harness 双向桥插件（独立 bundle）。QQ 消息直接驱动 DSH agent 会话，agent 回复自动发回 QQ。
+QQ ↔ DeepSeek Harness 双向桥插件（独立 bundle，自研维护）。QQ 消息直接驱动 DSH agent 会话，agent 回复自动发回 QQ。
+
+> 包名 `dsh-qq-onebot-bridge` 是 dsh 宿主的加载契约（不改）；对外定位、目录与发版以「QQ 集成接入 / qq-integration」为准。
+> 控制台是**独立进程**（`http://127.0.0.1:8880/`，不依赖 dsh，`control/bin/qq-control.mjs` 前台即可启动）。
+
+### 这是个**集成**插件
+
+它自己**不实现 QQ 协议**，做的是把三样东西接起来：
+
+| 集成的东西 | 本包出什么 | 本包**不含**什么 |
+|---|---|---|
+| **OneBot v11**（协议层） | 反向 WS 服务端、事件分发、action 调用、@ 解析、合并转发——复用上游 `dsh-qq-onebot-bridge` 的代码并继续维护 | QQ 登录、协议编解码、收发包（都在 OneBot 实现里） |
+| **OneBot 实现**（QQ 接入端） | 只要它说 v11 就认：Waylay / NapCat / LLOneBot / OpenShamrock / Lagrange / go-cqhttp | 不打包、不分发任何实现的二进制 |
+| **Waylay**（当前默认接入端） | **内置**拉起 / 停止 / 状态读取（`lib/waylay-launch.js` + `/api/waylay*` + 面板「启动 Waylay」） | Waylay 本体与注入 DLL（由用户自行安装） |
+
+来源、许可证与「复用边界」写在 [`NOTICE.md`](NOTICE.md)；上游 MIT 版权行在 `LICENSE` 里原样保留。
 
 ## 架构
 
 ```
-QQ 客户端 ←→ OneBot 实现（NapCat / LLOneBot / OpenShamrock / Lagrange…）
+QQ 客户端 ←→ OneBot 实现（Waylay〔当前默认〕/ NapCat / LLOneBot / OpenShamrock / Lagrange…）
                   │ 反向 WebSocket（OneBot 连我们；端口 6700）
                   ▼
         dsh-qq-onebot-bridge（本插件）
@@ -19,9 +34,9 @@ QQ 客户端 ←→ OneBot 实现（NapCat / LLOneBot / OpenShamrock / Lagrange�
   快照每 2s    ──► qq-runtime.json         （会话/闸门/生效配置/录制与注入状态）
   qq-inject.jsonl ◄── 控制台写、桥轮询读   （注入：默认 dry-run，出站全拦截）
 
-独立控制台 control/（进程 8799，不依赖 DSH 桌面端）
+独立控制台 control/（进程 8880，不依赖 DSH 桌面端）
   ├─ 读：端口/进程、事件流、决策链、体检、录制列表、运行快照
-  ├─ 写：启停宿主/NapCat/TTS、释放端口、离线回放（沙箱 + dry-run）、事件注入
+  ├─ 写：启停宿主/Waylay/TTS、释放端口、离线回放（沙箱 + dry-run）、事件注入
   └─ 鉴权：仅 127.0.0.1 + token + 同源 Origin 校验
 ```
 
@@ -47,7 +62,7 @@ dsh plugin --profile web remove dsh-qq-onebot-bridge
 
 ### 官方桌面端（DSH Desktop）
 
-官方桌面端（Electron 版 `DeepSeek Harness.exe`）跑的是 `~/.dsh/profiles/desktop` 这个 profile，**由应用独占管理**（CLI 会拒绝 `dsh --profile desktop`），它和 CLI 版**共用同一个 DSH 运行时版本**——所以本插件从 v0.5.9 起声明的 peer 范围同时覆盖 `^0.1.x` 与 `^0.2.0-rc.2`，两边都能直接装、**不需要 `dsh plugin allow-version` 豁免**。
+官方桌面端（Electron 版 `DeepSeek Harness.exe`）跑的是 `~/.dsh/profiles/desktop` 这个 profile，**由应用独占管理**（CLI 会拒绝 `dsh --profile desktop`），它和 CLI 版**共用同一个 DSH 运行时版本**——所以本插件声明的 peer 范围同时覆盖 `^0.1.x` 与 `^0.2.0-rc.2`，两边都能直接装、**不需要 `dsh plugin allow-version` 豁免**。
 
 装法与 web 版一致，只是走桌面端的插件管理界面：
 
@@ -57,7 +72,105 @@ dsh plugin --profile web remove dsh-qq-onebot-bridge
 
 > 手动/本地目录安装（不经市场）时注意：光有依赖还不够，**必须同时把 `dsh-qq-onebot-bridge` 加进该 profile `package.json` 的 `dsh.profile.bundles`**，加载器才会挂载它——只装依赖的话它只会出现在"已装依赖"里而不工作（本机实测）。市场安装会自动处理这一步。
 
-> ⚠️ **一台机器只允许一个实例托管 QQ 桥**：web 宿主与桌面端可以都装本插件，但两者抢同一个 OneBot 端口（默认 6700），只有一个能绑上——另一个会在日志里说明原因并**每 15 秒重试**，等端口释放后自动接管（v0.5.9 起不再崩溃、也不会拖住宿主启动）。**不要用"给另一个 profile 改个端口"来让两个都跑**：它们共用同一份 `cwd`（`qq-sessions.json` / `qq-memory/` / `qq-reminders.json` / 积分与统计…都在那儿），两个实例同时读写会互相覆盖，`injectDryRun:false` 时注入队列里的动作还会真的发两遍。要固定由某一个托管，正确做法是**只在一个 profile 里启用本插件**（另一个从 `dsh.profile.bundles` 里去掉），或者把 `cwd` 也分成两个不同目录。
+> ⚠️ **一台机器只允许一个实例托管 QQ 桥**：web 宿主与桌面端可以都装本插件，但两者抢同一个 OneBot 端口（默认 6700），只有一个能绑上——另一个会在日志里说明原因并**每 15 秒重试**，等端口释放后自动接管（不会崩溃、也不会拖住宿主启动）。**不要用"给另一个 profile 改个端口"来让两个都跑**：它们共用同一份 `cwd`（`qq-sessions.json` / `qq-memory/` / `qq-reminders.json` / 积分与统计…都在那儿），两个实例同时读写会互相覆盖，`injectDryRun:false` 时注入队列里的动作还会真的发两遍。要固定由某一个托管，正确做法是**只在一个 profile 里启用本插件**（另一个从 `dsh.profile.bundles` 里去掉），或者把 `cwd` 也分成两个不同目录。
+
+## 从零安装（一台干净的机器）
+
+> 这一段写给"什么都没有"的机器：照顺序做完，中间不需要猜。
+> 环境已经有了的人可以直接跳到上面的 `安装 / 卸载`。
+
+### 0. 先确认你有什么、没有什么
+
+| 需要 | 干什么用 | 没有会怎样 |
+|---|---|---|
+| Windows 10/11 x64 | Waylay 注入的是官方 `QQ.exe` | 跑不了（本项目没做其它平台） |
+| 官方 NTQQ（PC 版） | 被注入的那个进程，机器人账号登在它里面 | 「启动 Waylay」找不到进程 |
+| Node.js ≥ 20 | 跑插件和控制台 | 宿主/控制台起不来 |
+| DSH（`dsh` CLI 或桌面端） | 提供宿主、模型、插件加载 | 插件没地方挂 |
+| **一个 QQ 小号** | 机器人自己的账号 | 用主号 = 拿主号去赌风控，别这么做 |
+| 模型（云端 key 或本地 Ollama） | 生成回复 | 能收不能回 |
+
+### 1. 装依赖并注册插件
+
+```sh
+cd <本目录>
+npm install --omit=dev                                   # 本地目录安装必需（ws 不会被 link 过去）
+dsh plugin --profile web add <本目录>                     # 注册进 profile
+```
+
+装完**必须**确认 `~/.dsh/profiles/web/package.json` 里已经有
+
+```json
+"dsh": { "profile": { "bundles": ["dsh-qq-onebot-bridge"] } }
+```
+
+少了这一步，插件只会出现在"已装依赖"里、**不会被加载**（本机实测）。市场安装会自动做。
+
+### 2. 写最小配置（不写这段她一句话都不会说）
+
+配置写进 **profile** 的 `~/.dsh/profiles/web/cordis.patch.yml`（**不要**写进仓库根目录那份）：
+
+```yaml
+- id: dsh-qq-onebot-bridge
+  config:
+    cwd: 'C:\Users\你\qq_chat'            # AGENT 的工作区（模型在里面跑命令）
+    dataDir: 'C:\Users\你\qq_chat'        # 记忆/聊天记录/金丝雀的根目录（下面第 3 步也能选）
+    botQq: 1000000000                     # 机器人自己的 QQ
+    allowUsers: [2000000001]              # 允许私聊的号
+    allowGroups: [3000000001]             # 允许的群
+```
+
+🔴 **两个白名单空着 = 全部拒绝**（刻意的安全默认）。这不是 bug：
+不在名单里的会话**根本不会被创建**，所以不会"回一句拒绝"，trace 里直接记「白名单」被拒。
+
+### 3. 第一次启动：选数据根目录
+
+插件**不给你默认目录**（故意的：她所有的记忆、聊天记录、金丝雀都住这一个目录里，
+"用了一个你没选过的目录"是最难发现的一类问题）。所以第一次启动后：
+
+1. **控制台会自动弹一个向导**（「先给她选一个放东西的地方」）：
+   点 **「浏览…」** 弹系统选文件夹窗口，确认路径后 **「就用这个目录」** ⇒ 直接写进 profile 的
+   `cordis.patch.yml`，再点 **「重启宿主让它生效」**。
+   向导会先把你选的目录**查一遍**再告诉你：是空的 / 已经有 N 个 `qq-*` 条目 / 有没有 `qq-canary.json`
+   ——「空目录」和「已经有两百天聊天记录」在界面上长得一样，选错一次就是把记忆接到别人身上。
+2. 也可以在 **设置 → QQ 助手 → 数据与备份** 里填同一个键（两处写的是**同一份配置**、走**同一套校验**）。
+3. 没选之前她照样能跑（用 `cwd` 兜底），但**两处会一直提醒你**：
+   - 控制台「运行快照」里一条橙色横幅（带「现在就选」按钮）+ `qq-trace.jsonl` 里一条 `stage=setup` 的 `warn`；
+   - 两处都写明当前临时用的是哪个目录——不给默认值不等于不告诉你。
+
+   > 自动弹窗的判据是**运行快照里的真实状态**（`dataDir.configured === false`），不是浏览器里记的
+   > "看过了"标记：用标记时，用户手改配置或换个浏览器，界面就会撒谎；用状态则选完自然不再弹，
+   > 手动清空 `dataDir` 想重选时它也会自然回来。
+
+⚠️ **换目录不会自动搬旧数据**。要搬就把旧的 `qq-*` 整个拷过去，**包括 `qq-canary.json`**：
+重新生成金丝雀，以前贴出去的旧哨兵串就再也认不出来了，等于把"泄露过"悄悄洗白。
+
+### 4. 启动顺序（顺序错了会看到各种"没反应"）
+
+1. 双击 `control/启动控制台.bat`（或 `node control/bin/qq-control.mjs`），记下它打印的带 token 地址；
+2. 控制台点 **「一键启动」**（= 起 DSH 宿主，插件随之加载）；
+3. 控制台点 **「启动 Waylay」**（注入进 QQ，**不会弹 QQ 窗口**，别等窗口）；
+4. 需要登录时点 **「看登录二维码」**，用手机 QQ 扫码。
+
+### 5. 验证四件事（别靠"感觉它活着"）
+
+| 查什么 | 怎么看 |
+|---|---|
+| 插件加载了吗 | 控制台「运行快照」有 `v<版本号>`；`设置 → QQ 助手` 打得开 |
+| 用的是哪个模型 | 发 `!model` —— 只读，报 provider/model/是否被覆盖三行 |
+| 整链路通不通 | 控制台 **「一键体检」**（`/api/diagnose`），它按顺序查端口/进程/快照/日志 |
+| 白名单生效没 | 私聊机器人发一句；没反应就去 trace 找「白名单」被拒那条 |
+
+### 6. 从零安装最容易踩的六个坑
+
+| 症状 | 真因 |
+|---|---|
+| 扫码成功但机器人一声不吭 | 两个白名单是空的（默认全拒） |
+| 「启动 Waylay」报找不到入口 | 没配 `waylayBat`，或 `_tmp/rin-inject/` 不在预期位置 |
+| 点了好几次「一键启动」，开出好几个 QQ 互相顶号 | Waylay 在扫码阶段不监听 13000，端口判据看不见它；控制台有 5 分钟单实例锁，锁文件在入口同目录 |
+| 记忆是空的 / 找不到聊天记录 | `dataDir` 没配（用 cwd 了）或换过目录没搬旧数据 |
+| 面板里全是空数据 | 控制台按 `dataDir` 读日志；`dataDir` 改了而控制台配置没跟上，就会读到空 |
+| 换了本地模型后第一次特别慢 | 首次加载模型（实测 3B 约 42 秒），热态才 0.37 秒；8GB 显存同时只放得下一个 |
 
 ## 在 DSH 设置里开关功能（v0.6「QQ助手」页）
 
@@ -66,16 +179,16 @@ dsh plugin --profile web remove dsh-qq-onebot-bridge
 - **日常六组直接铺开**：**AI账号与白名单** / 对话基础 / **限流：入站 / 出站** / **避开高峰期** / 群运营工具箱 / 娱乐与互动 / 语音与媒体；**安全与风控 · 记录与通知 · 高级与调试**三组标"进阶"、默认折叠。共 11 组 **65 个开关 + 11 个数值项 + 1 个时段列表 + 3 个名单**（从 225 个配置键里精选）；顶部**搜索框**按中文标签 / 配置键名过滤（纯前端）。
   - 两个限流闸放在**同一组**、按管道顺序排，就是为了别混：**每分钟进模型上限**（入站，消息还没进模型就拦，省模型额度）vs **出站回复限流**（模型已生成、发出去之前拦，防 QQ 端发太快被风控）。两个**默认都关**，可以只开一个。
   - **开关和它的数值在同一行里**：左边开关、右边 `− n +`，不用再上下对照「XX」和「XX·数值」谁管谁。
-  - **避开高峰期（v0.6.8）**：功能本来就有，但以前只能改 YAML；现在整组搬进面板——开关、**周末不静默**、以及**静默时段列表**（每段两个原生时间控件，支持跨夜 `22:00-6:00`，最多 8 段）。
-  - **回复带引用（v0.6.9）**：打开后回复会引用被回答的那条消息（QQ 原生「回复」），多人同时提问时更清楚；**默认关**（单人聊天会显得啰嗦），引用失败（消息被撤回 / ID 过期 / 客户端不支持）会**自动去掉引用重发一次**。它放在**「对话基础」**组——那是"回复的样子"，不是"谁能让它开口"。
-  - **AI账号与白名单（v0.6.8）**：这一组回答"机器人是谁、它认谁"——**AI 账号**（`botQq`，判断 @ 与戳一戳）、**回应所有人**、「群里只理被 @ 的」「允许私聊」两个准入门、以及 `allowUsers` / `allowGroups` 两个白名单（**空列表 = 全部拒绝**）。不想维护名单时把「回应所有人」打开：**所有私聊和所有群都会响应**，但**群里的 @ 门槛不变**（仍要 @ 到它）。它们以前都得改 YAML；现在面板里直接填号码（输入框 + 「添加」，号码以**数字**写进配置，写成字符串会让白名单永远匹配不上），还能从「最近来信」一键加入；「回应所有人」开着时两个名单行会标成"现在不起作用"。
-- **数值项（v0.6.7）**：风控里那些"阈值"不再要你去手改 YAML——**每分钟进模型条数**（1–10，默认 5）、出站回复的上限与窗口、去重窗口、刷屏治理四项、戳一戳每小时上限、周报天数，都在面板里用 `− 数字 +` 直接改。**范围与步长从 schema 现读**（不抄第二份），越界/小数会被服务端 400 拒掉并说清范围。
+  - **避开高峰期**：以前只能改 YAML；现在整组搬进面板——开关、**周末不静默**、以及**静默时段列表**（每段两个原生时间控件，支持跨夜 `22:00-6:00`，最多 8 段）。
+  - **回复带引用**：打开后回复会引用被回答的那条消息（QQ 原生「回复」），多人同时提问时更清楚；**默认关**（单人聊天会显得啰嗦），引用失败（消息被撤回 / ID 过期 / 客户端不支持）会**自动去掉引用重发一次**。它放在**「对话基础」**组——那是"回复的样子"，不是"谁能让它开口"。
+  - **AI账号与白名单**：这一组回答"机器人是谁、它认谁"——**AI 账号**（`botQq`，判断 @ 与戳一戳）、**回应所有人**、「群里只理被 @ 的」「允许私聊」两个准入门、以及 `allowUsers` / `allowGroups` 两个白名单（**空列表 = 全部拒绝**）。不想维护名单时把「回应所有人」打开：**所有私聊和所有群都会响应**，但**群里的 @ 门槛不变**（仍要 @ 到它）。它们以前都得改 YAML；现在面板里直接填号码（输入框 + 「添加」，号码以**数字**写进配置，写成字符串会让白名单永远匹配不上），还能从「最近来信」一键加入；「回应所有人」开着时两个名单行会标成"现在不起作用"。
+- **数值项**：风控里那些"阈值"不再要你去手改 YAML——**每分钟进模型条数**（1–10，默认 5）、出站回复的上限与窗口、去重窗口、刷屏治理四项、戳一戳每小时上限、周报天数，都在面板里用 `− 数字 +` 直接改。**范围与步长从 schema 现读**（不抄第二份），越界/小数会被服务端 400 拒掉并说清范围。
 - **每行都写清楚**：中文标签 + 一句话"关掉会怎样" + **配置键名**（方便你去配置文件里找同名键），右侧是拨动开关；行尾徽标 `非默认`（与 schema 默认值不同）、`更新中`（配置文件里的值与当前生效值不一致）。
 - **点一下即写入**：只改 profile 的 `cordis.patch.yml` 里**本插件那一个 config 块**（其它条目与注释原样保留）；白名单之外的键、非布尔值一律拒绝。写入是**先写临时文件再 rename 的原子替换**，并留一份 `.bak-qqai` 备份。
 - **生效方式**：写入后 DSH 会热重载本插件条目（QQ 桥会**短暂重连一两秒**）；若宿主没开热重载，重启宿主后生效。
 - **没装 web 服务的宿主**（如 TUI profile）不会有这一页——此时用 `ctx.inject(['webServer'])` 的那段代码**根本不会执行**，插件照常工作。
-- **页面最上面是一组「相关链接」**（v0.6.3 起，原来在页面最底下）：依次是 **`QQ助手账号（登录 / 扫码）`**（→ 宿主的 `/qqai/account`，点开即已登录的 NapCat 页面）、`更新日志（v0.6.3）`（GitHub 的 `CHANGELOG.md`）、`调试文档`（README 调试章节）、**`调试台（独立控制台）`（压在最底下）**。地址由 `package.json` / `qq-control.json` 推导。
-  - **调试台是独立进程，插件不会自动启动它**：面板会探一次 `127.0.0.1:8799` 并如实标「运行中 / 未启动」；没启动时那一行直接给出可复制的启动命令。
+- **页面最上面是一组「相关链接」**（原来在页面最底下）：依次是 **`QQ助手账号（登录 / 扫码）`**（→ 宿主的 `/qqai/account`，点开即已登录的 NapCat 页面）、`更新日志`（GitHub 的 `CHANGELOG.md`）、`调试文档`（README 调试章节）、**`调试台（独立控制台）`（压在最底下）**。地址由 `package.json` / `qq-control.json` 推导。
+  - **调试台是独立进程，插件不会自动启动它**：面板会探一次 `127.0.0.1:8880` 并如实标「运行中 / 未启动」；没启动时那一行直接给出可复制的启动命令。
   - 点「调试台」走宿主的 `/qqai/console`：**跑着**就 302 到**带 token** 的地址（省掉手抄 token），**没跑**就回一页说明先跑哪条命令——不会再出现"点进去只看到连不上"。token 只在服务端读，**不进面板数据**。
 
 > 想改的键不在面板里？直接编辑 profile 的 `cordis.patch.yml`（面板顶行会显示它是哪个文件）。面板刻意只放"日常会动的开关"，不做成任意配置编辑器。
@@ -235,23 +348,19 @@ ws://127.0.0.1:6700/
 
 其它实现同理（LLOneBot 填反向 WebSocket、OpenShamrock 填被动 WebSocket、go-cqhttp 填 `ws-reverse`）。若本插件配了 `accessToken`，OneBot 端填同一 token。
 
-### NapCat 一键启动与排障（v0.6.5）
+### Waylay 启动/停止与排障
 
-**机器人在线只要求 NapCat 反过来连 6700**，不要求你能从这里启动它——但登录/扫码那一步通常得把 NapCat 拉起来。
+**机器人在线只要求被注入的那个 QQ 反过来连 6700**，不要求你能从这里启动它——但登录/扫码那一步通常得把 Waylay 拉起来。
 
-- **不用手抄路径**：DSH 面板「快捷操作 → 启动 NapCat」与控制台「启动 NapCat」会**自己探测**常见安装位置
-  （`%LOCALAPPDATA%\Programs\NapCat\bootmain\`、`%ProgramFiles%\NapCat\bootmain\`、`~\.dsh-qq\`）。
-  都没找到时才需要填：控制台「配置 → NapCat 启动脚本」= `…\NapCat\bootmain\launcher.bat`
-  （**别填同目录的 `napcat.bat`**：那一版它只是拉起加载器 + `pause`，实测秒退什么都不做）。
-  控制台与 DSH 面板读的是**同一份** `qq-control.json`，填一次两边都生效。
-- **两个文件都在你的工作目录里**（`qq-control.json` 的 `cwd`）：
-  `qq-napcat-launch.cmd`（**垫片脚本**，点「启动 NapCat」那一刻才生成，所以安装包里没有它，别去插件目录翻）
-  与 `qq-napcat-launch.log`（提权窗口是隐藏的，启动脚本的输出全在这里）。
-- **成功判据是日志里的心跳行**（`=== shim start … ===`）：提权那一跳被系统拦下时，powershell 退出码仍是 0、
-  6099 也可能一直在监听（NapCat 本来就在跑），只有心跳能证明"命令真的落地了"。没有心跳时界面会说
-  "这次点击什么都没发生"，请**用管理员身份重开控制台/宿主**，或手动右键 `launcher.bat` →「以管理员身份运行」。
-- **本机策略 `ConsentPromptBehaviorAdmin=0` 时提权不弹窗**，看不到 UAC 是正常的（不是"没反应"）。
-- **「桥：无快照」怎么读**（v0.6.5 起鼠标停上去有完整解释）：① 快照停在 N 分钟前 ⇒ 桥停了/插件被禁用；
+- **不用手抄路径**：DSH 面板「快捷操作 → 启动 Waylay」与控制台「启动 Waylay」读的是**同一份** `qq-control.json`
+  （`waylayBat`，填 `_tmp\rin-inject\rin-waylay.bat` 或它所在目录），填一次两边都生效。
+- **入口同目录的东西都是自动生成的**：注入日志与登录二维码（`qrcode.png`）都在 bat 同目录，安装包里没有、
+  也别去插件目录翻。二维码超过 5 分钟自动判过期——点「停止」再「启动」重新走一遍登录。
+- **成功判据分两层**：13000 在听 = 进程起来了；`/api/status` 的 `logged_in` = 会话就绪。面板把这两件事**分开显示**
+  （实测过端口一直在听、`logged_in` 却是 false，发消息报 1006501），只看端口会得出"一切正常"的错误结论。
+- **「停止」= 结束那个监听 13000 的 QQ**：按端口反查 PID、核对进程名、带自杀保护，**绝不按镜像名杀**——
+  你自己开的其他 QQ 不受影响。注入后的 QQ **不弹窗口**是正常现象。
+- **「桥：无快照」怎么读**（鼠标停上去有完整解释）：① 快照停在 N 分钟前 ⇒ 桥停了/插件被禁用；
   ② 宿主没跑 ⇒ 快照由宿主里的插件写出，先启动宿主；③ 宿主在跑却没快照 ⇒ 插件没启用，
   或**插件的工作目录与控制台配的不是同一个**（插件把快照写成 `<它自己的工作目录>\qq-runtime.json`；
   用控制台「启动宿主」两边就一致）。
@@ -287,7 +396,7 @@ ws://127.0.0.1:6700/
 - 手动把图片放进 `cwd/qq-faces/` 自动登记为可发送表情（文件名=表情名），删除文件自动剔除
 - `autoCollectStickers=true` 时自动收藏群消息里的图片表情
 
-## 扩展接缝（v0.7.0）
+## 扩展接缝
 
 同宿主里的其它插件可以**不改本插件源码**地"发一条消息、看一眼收发、加一组工具"，但**没有**绕过护栏的第二条路：
 
@@ -323,7 +432,7 @@ if (api.instanceId !== lastInstanceId) { lastInstanceId = api.instanceId; reRegi
 - **只读**：事件不能改写内容、不能拦截消息；监听器抛错或异步 reject 只记一条 debug。
 - **工具 provider 是实验功能、默认关**：只能新增（不能覆盖 10 个内置 `qq_*` 工具）、provider 抛错只跳过它自己、
   每 provider **16 工具 / 4 段**、总计 **40 / 12** 的上限；注入与跳过全部进 trace。**外部扩展的行为不在本项目维护范围内。**
-  （工具上限 v0.7.1 从 8 抬到 16：有真实使用者按"一个包一类工具"拆分，正好卡在 8 上。提示段仍是 4 —— 那是每条消息的固定成本。）
+  （工具上限从 8 抬到 16：有真实使用者按"一个包一类工具"拆分，正好卡在 8 上。提示段仍是 4 —— 那是每条消息的固定成本。）
 - **写 provider 的三条注意事项**（① 是第三方实战报告，②③ 已按宿主源码核对）：
   ① **不要改写 `agentCtx.tools`**（比如给 `.register` 赋值）。`agentCtx.tools` 背后是宿主**共享的** `ToolRuntime`
      （`@deepseek-ai/dsh-tools` 里 `class ToolRuntime extends Service`；`register()` 内部是
@@ -337,7 +446,7 @@ if (api.instanceId !== lastInstanceId) { lastInstanceId = api.instanceId; reRegi
   ③ 上面那个 `restrict` 还有一半是不静默的：名字必须是**已知全局工具**，写错名字（以及空 filter、`run_code`、scope 内名字）
      会**直接抛错**（`unknown global tool` / `requires a scoped context` / `is a no-op`）。
      要收窄优先用 `deny`（只禁点名的），或者把过滤做在自己的视图层，别去动共享 runtime。
-- **写 provider 的四条注意事项**（v0.7.3，来自第一个真实第三方插件的实测，出处见 issue #4 作者的 `ext/README.md`）：
+- **写 provider 的四条注意事项**（来自第一个真实第三方插件的实测，出处见 issue #4 作者的 `ext/README.md`）：
   ① **参数必须是标准 JSON Schema**：直接返回裸工具对象时，宿主用 `assertSupportedJsonSchema` 校验，
      属性里写 `required: true` 会被**直接拒**，必须写成对象顶层的 `required: ['name']` 数组。
      用本项目的 `defineTool({...})` 则自动转成这份标准形状（推荐）。
@@ -376,11 +485,11 @@ if (api.instanceId !== lastInstanceId) { lastInstanceId = api.instanceId; reRegi
 
 ### 关于 fork：上游只有一条线
 
-- **本仓库只维护 `main` + tag**（例如 `v0.7.4`）。GitHub 上的 fork 是**别人的副本**：它不等于上游分支，
+- **本仓库只维护 `main` + tag**（例如 `v0.1.0`）。GitHub 上的 fork 是**别人的副本**：它不等于上游分支，
   也不会自动进这里——fork 里有多少提交，这条 `main` 一条都不受影响。
 - **我们不合并、也不 rebase 别人的 fork 历史**：那些提交按 fork 作者自己的节奏演进，硬并进来历史会读不懂。
   想贡献就开 issue 或 PR（小改动直接 PR 最快）；想长期维护一条自己的线也完全没问题——按我们的 tag rebase 即可。
-  我们不会去抄你的提交历史，但**想法可以取**（v0.7.4 的「污点窗口」就来自 issue #4 作者的补丁分支）。
+  我们不会去抄你的提交历史，但**想法可以取**（前身分支的「污点窗口」就来自 issue #4 作者的补丁分支）。
 - 装的时候认准**本仓库或 npm 包**，别从任意 fork 装——里面的代码可能被改过，而 README 与 CHANGELOG 只描述这条线。
 - **给"按字面锚点做补丁"的人**：我们重构不会为兼容放慢，但会在 CHANGELOG 里点出来——
   尤其是 `lib/bridge.js` **顶部的 import 块**、以及某个函数被**整块重写**这种会让人重锚的改动。
@@ -390,7 +499,7 @@ if (api.instanceId !== lastInstanceId) { lastInstanceId = api.instanceId; reRegi
 
 - `/new`：结束当前会话并开新会话
 - `/status`：查看当前会话状态与 sessionId 前缀
-- **`/为什么`（v0.6.9）**：这条消息为什么没回——引用那条消息发 `/为什么`（或 `/为什么 <消息id>`、不带参数查本会话最近一条），
+- **`/为什么`**：这条消息为什么没回——引用那条消息发 `/为什么`（或 `/为什么 <消息id>`、不带参数查本会话最近一条），
   它把 trace 的决策链翻译成人话：`收到消息✅ → 白名单✅ → 静默时段⛔` + 「卡在「静默时段」：…」。
   群聊仅管理员可用；只给环节与原因，不回显消息原文。
 - 调试日志：`{cwd}/qq-bridge-debug.log`（消息路由、语音转写、agent 事件，按时间戳追加）
@@ -407,7 +516,7 @@ if (api.instanceId !== lastInstanceId) { lastInstanceId = api.instanceId; reRegi
 
 node test/control-unit.mjs        # 也可以逐个跑：node test/<name>-unit.mjs
 
-#    61 个文件：桥的分支/命令/守卫、控制台 HTTP 与体检、录制回放与注入、注入安全边界、硬约束验收台、
+#    65 个 *-unit.mjs（4157 条断言）：桥的分支/命令/守卫、控制台 HTTP 与体检、录制回放与注入、注入安全边界、硬约束验收台、
 
 #    `/为什么` 的决策链翻译（why-unit）…
 
@@ -422,12 +531,29 @@ node test/replay-live.mjs
 # 3) 真机脚本（需要宿主/控制台已在运行，自己扮演 OneBot 客户端连 6700）
 
 node test/live-e2e.mjs        # 消息 → 回复 全链路
-node test/live-stream.mjs     # 实时事件流 / 决策链 / 体检接口（控制台 8799）
+node test/live-stream.mjs     # 实时事件流 / 决策链 / 体检接口（控制台 8880）
 node test/replay-live-host.mjs --token <控制台 token>   # 录制 → 离线回放 → 注入
 ```
 
 老版本的 `sim-*.mjs` 协议模拟脚本保留在 `test/` 下，仍可用于手工排查（`node test/sim-group.mjs` 等，需宿主运行）。
 语音转文字链路建议直接用 QQ 实测（模拟脚本需真实 STT 调用）。
+
+### 在哪跑测试（这件事踩过）
+
+**仓库里跑不起来**：仓库只有 git，没有 `node_modules`，`node test/*.mjs` 会立刻
+`ERR_MODULE_NOT_FOUND: @deepseek-ai/dsh-llm`，**整批套件崩**（环境问题，不是代码坏了）。
+测试要跑在**运行时副本**（dsh 真正加载的那份，`~/.dsh/profiles/web/node_modules/dsh-qq-onebot-bridge`）。
+
+两份副本靠手工维持会漂（2026-10-31 实际漂过：仓库落后运行时 11 分钟、9 个文件，
+`dataDir` / `funEnabled` 的改动全只在运行时那份里，仓库一个字节都没有）。所以用脚本守恒：
+
+```sh
+node tools/sync-runtime.mjs            # 仓库 → 运行时（只拷有差异的文件，只拷不删）
+node tools/sync-runtime.mjs --check    # 只比对不写；不一致退出码 1（适合串到脚本里）
+cd ~/.dsh/profiles/web/node_modules/dsh-qq-onebot-bridge && node test/settings-unit.mjs
+```
+
+比对**忽略 CRLF**：仓库是 LF、运行时是 CRLF（git `core.autocrlf`），按字节比会把每个文件都报成有差异。
 
 ## 记忆与人设说明（重要）
 
@@ -437,7 +563,7 @@ node test/replay-live-host.mjs --token <控制台 token>   # 录制 → 离线�
 
 ### 账号风控风险
 
-- 本插件通过**第三方协议实现**（NapCat 等）接入 QQ，**不是腾讯官方接口**，与《QQ 软件许可及服务协议》相悖，QQ 官方明确禁止非官方客户端/协议
+- 本插件通过**第三方协议实现**（当前是 Waylay：把客户端注入官方 `QQ.exe`；NapCat 已于 2026-10-30 退场）接入 QQ，**不是腾讯官方接口**，与《QQ 软件许可及服务协议》相悖，QQ 官方明确禁止非官方客户端/协议
 - 使用第三方协议存在**账号被限制登录、冻结、甚至永久封禁**的风险，且可能波及其他正常使用的 QQ 账号（同设备/同 IP）
 - 建议使用**机器人小号**运行，绝不要用大号/常用号
 - 常见风控诱因：高频发言、短时间大量消息、发送营销/广告/违规内容、被多人举报、异常登录设备
@@ -478,13 +604,13 @@ node test/replay-live-host.mjs --token <控制台 token>   # 录制 → 离线�
 - **[docs/DEBUG.md](docs/DEBUG.md)** —— 调试 / 排障：trace、离线回放、事件注入、一键体检、诊断包、硬约束验收台
 - **[docs/FEATURES.md](docs/FEATURES.md)** —— v0.5 能力细节：合并转发展开、`/文件` `/取` `/相册` `/ocr`、按天归档与 `/找`、群成员与群信息、表情反应
 
-## 独立控制台（control/，v0.4.0）
+## 独立控制台（control/）
 
 插件自带一个**独立的本地运维端**，不依赖 DSH 桌面端：宿主挂掉时它照常可用，端口与进程一目了然。
 
 ```sh
 
-# 启动（默认 http://127.0.0.1:8799，启动后打印带 token 的地址）
+# 启动（默认 http://127.0.0.1:8880，启动后打印带 token 的地址）
 
 npm run control            # 或 node control/bin/qq-control.mjs --open
 
@@ -494,8 +620,8 @@ npm run control            # 或 node control/bin/qq-control.mjs --open
 
 | 能力 | 说明 |
 |---|---|
-| 端口总览 | 控制台 8799 / 宿主 3080 / OneBot 6700 / NapCat 6099 / GPT-SoVITS 9880 的监听状态、占用 PID 与进程名；6700 的连接数即"机器人在线" |
-| 启停 | 启动/停止/重启宿主（自动带 `--no-open`，日志重定向到 `qq-host-out.log`/`qq-host-err.log`）、启动/停止 NapCat 与 QQ、启动/停止 GPT-SoVITS、一键全停 |
+| 端口总览 | 控制台 8880 / 宿主 3080 / OneBot 6700 / Waylay 13000 / GPT-SoVITS 9880 的监听状态、占用 PID 与进程名；6700 的连接数即"机器人在线" |
+| 启停 | 启动/停止/重启宿主（自动带 `--no-open`，日志重定向到 `qq-host-out.log`/`qq-host-err.log`）、启动/停止 Waylay（停 = 结束**监听 13000** 的那个 QQ，绝不按镜像名杀）、启动/停止 GPT-SoVITS、一键全停 |
 | 启动预检 | 起宿主前检查 3080/6700，被占则直接报「端口←进程#PID」，而不是静默失败 |
 | 释放端口 | 对占用受管端口的进程一键 `taskkill /T /F`（护栏：只允许受管端口占用者与已知机器人进程，绝不误杀无关 PID） |
 | 日志 | 宿主 stdout / stderr / 桥调试日志，自动跟随、可切行数 |
@@ -519,19 +645,11 @@ npm run control            # 或 node control/bin/qq-control.mjs --open
 | 仓库本身 | 不含任何密钥/口令/真实 QQ 号：密钥只存在于你的 DSH profile 配置（仓库外）；`test/privacy-unit.mjs` 每次跑测试都会重新扫描全部被跟踪文件（真实号从你本机私有配置或 `DSH_QQ_PRIVATE_IDS` 现取，测试文件里不含真实号） |
 | 控制台 | 只绑 `127.0.0.1`，所有接口需 token（存在被忽略的 `qq-control.json`），拒绝跨站 Origin |
 
-> 部署事实：本插件是 **DSH bundle**，运行在 DSH profile 内，`@deepseek-ai/dsh-*`、`@deepseek-ai/schemastery` 等官方 peer 依赖随 profile 一起装好。**官方包必须写全作用域名**：不带作用域的 `schemastery` 是另一个包（3.18.0），只有在"别的插件恰好把它 hoist 到共享 node_modules"时才能解析——v0.4.0 之前 `lib/` 正是这么写的，换到干净环境立刻 `ERR_MODULE_NOT_FOUND`（[issue #1](https://github.com/cheesehaqi/dsh-qq-onebot-bridge/issues/1)）；现已统一用作用域名，并由 `test/static-unit.mjs` 静态守住（裸名/未声明的 import 直接测试失败）。`ws` 是普通运行时依赖，本地目录安装要按上面「安装」一节先 `npm install`。把 `lib/` 单独拷出来裸跑仍然跑不起来（设计如此，不是缺依赖）。
+> 部署事实：本插件是 **DSH bundle**，运行在 DSH profile 内，`@deepseek-ai/dsh-*`、`@deepseek-ai/schemastery` 等官方 peer 依赖随 profile 一起装好。**官方包必须写全作用域名**：不带作用域的 `schemastery` 是另一个包（3.18.0），只有在"别的插件恰好把它 hoist 到共享 node_modules"时才能解析——早期版本 `lib/` 正是这么写的，换到干净环境立刻 `ERR_MODULE_NOT_FOUND`（[issue #1](https://github.com/cheesehaqi/dsh-qq-onebot-bridge/issues/1)）；现已统一用作用域名，并由 `test/static-unit.mjs` 静态守住（裸名/未声明的 import 直接测试失败）。`ws` 是普通运行时依赖，本地目录安装要按上面「安装」一节先 `npm install`。把 `lib/` 单独拷出来裸跑仍然跑不起来（设计如此，不是缺依赖）。
 
 ## 更新日志
 
 最近五个版本（始终滚动展示）：
 
-- **v0.7.23** — 「小鲸鱼控制台重排 + 界面热重载 + QQ助手面板收拢」（本地改动，非上游发布）。主人说"控制台有点乱了，还有 qq 助手那个"。① **结构**：13 个平铺 section 收进 5 个折叠分组（概览 / 实时 / 诊断 / 数据 / 登录），重排脚本 `_reflow_ui.py` 只搬块不改块内并断言 section 数不变（16=16）。② **折叠不等于藏起来**：诊断组出现真 ❌ 时自动顶开一次、登录组在「机器人不在线且正在登录流程」时顶开一次、`#pageErrors` 与 `#warnCard` 要显示时连带展开所在分组（以前 `display=''` 在折叠容器里等于没显示）；自动展开只做一次，用户收回后不再弹。③ **收起的组不干活**：「数据」组七个接口改为点开才加载，收起时不轮询。④ **危险操作圈进 `.danger-zone`**：停止宿主/NapCat/SoVITS/全部停止，不再与启动按钮同一行。⑤ **两个真缺陷（量出来的）**：**每个分组第一张卡片顶上 41px 被标题栏遮住**——`.group` 的 `overflow:hidden`（裁圆角）把它变成滚动容器，`summary` 的 `position:sticky;top:41px` 在滚动位置 0 就生效，标题栏下移 41px 而文档流位置没动，正好盖住内容（「运行快照」h2 就是这样"消失"的；量测 修前 summary y=136 / card y=134，修后 95/134）；**长路径不换行把卡片顶出屏幕**（`body` 加 `overflow-wrap:break-word`，端口表窄屏改横向滚动）。顺带 `.cols` 改 `align-items:stretch`、pill 从实心绿改「小圆点+描边」。⑥ **界面热重载**：`ui.html` 原来启动时读一次就永远发同一份，改了界面刷新看不到（调试时极易误判"我改错了"）；`createControlServer` 增加 `uiFile`，每请求比 mtime，变了才重读，读失败保留上一份。⑦ **QQ助手面板**：写入方式/生效范围两段长说明收进默认折叠的 `<details>`，开关组不再被顶出屏幕；`panelFooterLinks` 五条链接顺序**一个字没动**。**测试**：`control-unit` **179/179** · `settings-unit` **294/294**（顺带修掉 CLIENT_VERSION 漂移：前端还写 0.7.16 而 package.json 已 0.7.22，会误报"前端落后请刷新"）· `console-debug-unit` 78/78 · `config-unit` 27/27；另做静态契约校验（91 个 id、21 个内联处理器，无缺失/未定义）与三档宽度（1480/760/512）无头 Chromium 实截核对。
-- **v0.7.22** — 「群邀请的第二种形态（分享链接消息）不再当普通话」（本地改动，非上游发布）。主人问"好像没显示"并贴了控制台截图。先校准事实：桥其实**在跑**（`qq-runtime.json` = 0.7.21 / pid 34988 / uptime 632s，22:31 有真实回合 inbound→agent→reply）；截图那个「小鲛鱼控制台/履约验收台」**不是本插件的页面**（8799 跑的 `control/bin/qq-control.mjs` 的 `ui.html` 里没有这些串，`3080/qq/console` 现在返回 0 字节），它的判断不代表桥状态。真缺口是：群邀请有**两种到达形态**，上一轮只修了 `request(group/invite)`（带 flag 能批）；另一种是 QQ 的「邀请你加入群聊」**分享消息**（`[链接]邀请你加入群聊（…"音游病情交流地"…）`，物证 `qq-inbox` 22:31:39 kind=message），它**没有 flag、批不了**，却被当普通话交给她（实测只回了 15 字），主人永远看不到有人邀请。修法：`onebot.js` 新增纯函数 `matchGroupInviteShare`（抠群名，普通聊天返回 null）；桥在命令分流前接上——trace 记 `invite-share`、推管理员「收到一条群邀请（分享链接形式）：群名…要在 QQ 里自己点」、给她的上下文追加"这是邀请不是命令、你进不去也批不了"。**测试**：`request-notify-test` 扩到 **25/25**（H1-H4 纯函数 + I1-I4 端到端）；全套回归 10 套 157/157。
-- **v0.7.21** — 「群邀请/好友申请不再静默丢弃 + 卡片反查硬兜底」（本地改动，非上游发布）。主人报告"群聊邀请、好友申请我这都没有显示"。取证把两件事分开：①**群邀请确实到了桥、被桥丢了**（`qq-inbox` 有 `requestType=group subType=invite groupId=100000002`，trace 结局"群 100000002 不在 allowGroups 白名单"）——`allowGroups` 是"允许她在哪些群说话"，而邀请的 groupId 是**要拉她进去的新群**，必然不在里面 ⇒ 100% 静默吞掉；邀请现在单独一路不受该门控，入队后可 `/同意 N`；②**好友申请一条都没到桥**（inbox 里零条 friend），所以不是桥丢的，桥侧只保证"到达后不再无声"（入队+推送，文案改「想加你好友」），并如实说明普通好友申请**没有补拉接口**（`/申请` 只覆盖入群申请/邀请/可疑好友）。③主修法：任何被策略丢弃的请求（verifyEnabled=false / 群不在白名单 / 队列满）统一走 `#notifyRequestDrop()`——trace 新 stage `request-drop` + 私聊推管理员说明原因，同一来源 10 分钟只提一次（防刷屏，3 连发实测只推 1 条、trace 全留）。④`verify.js` 新增 `requestKindOf` 区分三种请求；`addRequest` 新增 `noChallenge`（邀请/好友不发验证题：被邀请的是群不是人，好友接口也带不出验证消息，且避免把邀请人的日常发言当答题）。⑤回归时抓到并修掉一个会挂死的真 bug：`lookUpBilibili` 紧预算下**永不 settle**（先成功一次再 150ms 才复现，Node 报 `unsettled top-level await` 退出）——内部预算算得对不等于一定返回，改在**外层 `Promise.race` 硬兜底**（+250ms，定时器不 unref），兜底按"查不到"返回 null 不冒充成功。**测试**：新增 `request-notify-test.mjs` **17/17**；`card-pollution-test` 18/18 连跑三次稳定（修前必挂）；全套回归 card-look 24/24 · card-enrich 22/22 · file-canary 19/19 · split-sentence 16/16 · forward-media 14/14 · file-save 11/11 · inbound-media 26/26 · voice-pipeline 5/5 · video-frames 2/2。
-- **v0.7.20** — 「文件链路金丝雀 + 出站权限审计 + 分句器不再劈开代码与引语收尾」（本地改动，非上游发布）。主人拍板"修改权限仅限于用户发的文件，多放几个金丝雀"，另报真机 bug：发代码 `print("Hello, World!")` 时 `")` 被劈成单独一条（"右半部分符号挤到下一行"）。① **读文件问题定性收口**（非闸门问题：她的 49 个工具里本就没有 read/write/bash）——所有「你可以直接读」类措辞诚实化（fileNote 头部、引用文件行、system prompt `inputGuide`），并修引用文件段提取丢 `path` 字段的取数 bug（丢了它本地直读回退永远轮不到）；② **权限边界**：`inboundFileSet` 登记入站文件，`#resolveSendPath` 每次发文件记 trace（stage `file-out`，明写"用户发来的文件/非用户发来的文件"，硬闸仍是目录白名单）；③ **金丝雀**：`qq-files/`、`qq-images/` 各埋哨兵 `_canary-请勿动我.txt`（自述身份 + `cny-*` 实例金丝雀，出站硬拒、重启重写），fileNote 尾部带唯一审计金丝雀 `CF-<8hex>` 并记 trace（stage `file-note`）；④ **分句器**：切点吃掉贴身引号/括号收尾、代码嫌疑（标点被包 + 前贴字母数字）整行不切、`」`后跟正文不切跟`「`才切、URL 半角 `!` 不切，裸全角标点维持旧行为。**测试**：新增 `file-canary-test.mjs` **19/19** + `split-sentence-test.mjs` **16/16**；全套回归 forward-media 14/14 · card-enrich 22/22 · file-save 11/11 · card-look 24/24 · card-pollution 18/18 · inbound-media 26/26 · voice-pipeline 5/5 · video-frames 2/2。
-- **v0.7.19** — 「转发图片真附图 + 小文件内容直贴」（本地改动，非上游发布）。主人真机截图暴露：① 转发/引用聊天记录里的图她只看到「[图片]」占位；② 她拿到文件路径却说「打不开，你直接把里头的东西贴过来吧」。取证先还了文件传输一个清白：NapCat 元数据 `size:"15"` 与落盘 15 字节逐字一致（内容是「笨笨大肥鱼」，界面上的"150"不是字节数）——真问题是**她拿到路径后 4 秒回话、零工具调用**，「这些路径你可以直接读」是空头支票。修法：`forward.js`（保持纯函数）的 `normalizeNode` 收集 image/mface 段里带 http(s) 链接的图片、只有图没有字的节点不再被跳过；`#expandForwards` 真下载（总数封 4 张、失败/超限如实计数）并经 `#imageBlocksFor(files, 4)` 附图，blocks 穿给主消息与引用两个调用方，附图结果写进正文（含"图片内容是被转述数据"提醒）；`#handlePrivateFiles` 对 ≤`fileTransferInlineMaxBytes`（新键，默认 4096）的 UTF-8 纯文本文件把内容直接过 `dataBlock` 围栏贴进她上下文，二进制/超大如实说"没贴、不要编"；fileNote 头部按是否贴了内容分别改口；尺寸说人话（15 B / 1.5 KB）。视频本体维持诚实边界（playurl 要登录+DASH，不做）。**测试**：新增 `forward-media-test.mjs` **14/14**；回归 card-pollution 18/18 · file-save 11/11 · inbound-media 26/26 · card-look 24/24+实网 28/28 · card-enrich 22/22。
-
-
-
-
+- **v0.1.0** — 「独立插件首版：控制台独立进程 · 端口统一 · Waylay 收编」。控制台回到**独立 node 进程**（`127.0.0.1:8880`，不依赖 dsh，8880 弃用），宿主 `/qqai/console` 只剩 302/JSON 入口（带 token 一跳、没跑自动拉起）；端口统一为 8880/3080/6700（数据面）/13000/8977/8501，NapCat WebUI（6099）随代码退场。`lib/napcat-launch.js` 管理面（提权垫片/加载器判定/WebUI token）整体删除，OneBot 数据面保留；`parseTasklist`/`QQ_CLIENT_RE` 搬进 `lib/waylay-launch.js`，「绝不按镜像名杀 QQ」由护栏 + 按端口反查 + 源码级断言三处钉住。QQ助手面板账号入口 302 到 Waylay 13000；猫娘实验室收缩为一个通往控制台的按钮。测试：control-unit 138/0 · settings-unit 263/0 · console-debug-unit 78/0；并修掉 ui.html 双 `<script>` 块下面板解析量具必然失败的旧账。
 **更早的版本（v0.4 线及之前）见 [CHANGELOG.md](CHANGELOG.md)** —— 完整历史、每个版本的缺陷清单与测试计数都在那里。

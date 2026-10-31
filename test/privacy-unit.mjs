@@ -182,17 +182,28 @@ check('被跟踪/枚举文件数量合理', tracked.length >= 90, `${tracked.len
 // 也不再按扩展名白名单过滤（旧实现漏掉 LICENSE、.sh/.ps1/.toml/.env 与无扩展名文件）；
 // 二进制内容按 latin1 再扫一遍，宁可多扫也不能漏。
 const textFiles = []
-const unreadable = []
+const unreadable = []   // 文件在，但读不出来 —— 这是真 bug（编码/权限/路径拼接）
+const missing = []      // 在 git 索引里，但工作区已删除（`D` 状态，还没提交）
 for (const name of tracked) {
+  const full = join(repo, name)
+  // 这两种情况必须分开：工作区删掉的文件**不会被提交**，扫不到它不构成漏检；
+  // 而"存在却读不出"会让一个文件悄悄消失在扫描结果里，那才是要拦的。
+  // 旧实现把两者都算 unreadable，于是"我有 3 个文件删了没提交"和
+  // "扫描器坏了"报出来是同一句话，看久了就分不清哪个该修。
+  if (!existsSync(full)) { missing.push(name); continue }
   let buffer
-  try { buffer = readFileSync(join(repo, name)) } catch { unreadable.push(name); continue }
+  try { buffer = readFileSync(full) } catch { unreadable.push(name); continue }
   const text = buffer.includes(0) && buffer.length > 4
     ? `${buffer.toString('utf8')}\n${buffer.toString('latin1')}`
     : buffer.toString('utf8')
   textFiles.push({ name, text })
 }
-check('每个被跟踪文件都被扫到（不许静默跳过）', unreadable.length === 0, unreadable.slice(0, 5).join(', '))
-check('扫描数量与文件清单一致', textFiles.length === tracked.length, `${textFiles.length}/${tracked.length}`)
+check('每个存在的被跟踪文件都被扫到（存在却读不出 = 真 bug）', unreadable.length === 0, unreadable.slice(0, 5).join(', '))
+check('扫描数量与"存在的文件数"一致', textFiles.length === tracked.length - missing.length, `${textFiles.length}/${tracked.length - missing.length}`)
+if (missing.length > 0) {
+  // 不判红，但一定要说出来：否则"147 个文件只扫到 144 个"这个数字无从解释。
+  console.log(`NOTE ${missing.length} 个文件在 git 索引里但工作区已删除（不会被提交，不扫）：${missing.slice(0, 6).join(', ')}`)
+}
 if (listed.source === 'git') {
   // 上面 `-z` 的回归断言：中文文件名必须真的出现在清单里。
   const nonAscii = tracked.filter((name) => /[^\u0000-\u007F]/.test(name))
@@ -321,8 +332,14 @@ const FAKE_MACHINE_ALLOW = [/example/i, /placeholder/i, /<[^>]{1,40}>/, /token=x
 
 // ------------------------------------------------------------- ③ 密钥形态 --
 const SECRET_PATTERNS = [
-  [/sk-[A-Za-z0-9_-]{20,}/g, 'OpenAI 风格 key'],
-  [/-----BEGIN [A-Z ]*PRIVATE KEY-----/g, '私钥'],
+  // `\b` 不能省：不加边界时，`risk-oriented…` 这类英文连写词会被从中间切出
+  // `sk-` 前缀当成密钥（本机实测的真误报）。注释里也不要把它写全（连 `sk-` 一起）——
+  // 测试文件自身就是被扫对象，写全了就等于自己制造一条命中。
+  [/\bsk-[A-Za-z0-9_-]{20,}/g, 'OpenAI 风格 key'],
+  // 只认"头"会自指误伤：脱敏器自己的规则与替换串里必然出现这一行。
+  // 真私钥的特征是"头后面跟着 base64 体"，所以要求 ≥40 个 base64 字符，
+  // 这样 `-----BEGIN PRIVATE KEY-----***REDACTED***…` 与正则字面量都不会被算命中。
+  [/-----BEGIN [A-Z ]*PRIVATE KEY-----\s*[A-Za-z0-9+/=\r\n]{40,}/g, '私钥'],
   [/Bearer\s+[A-Za-z0-9._-]{24,}/g, 'Bearer token'],
   [/\b[0-9a-f]{32}\.[A-Za-z0-9_-]{12,}\b/g, '复合形态 key（如智谱）'],
   // 早期版本漏了这一类：一条真机上的 `?token=<44 位随机串>` 被抄进测试文件后一路通过。
@@ -334,6 +351,10 @@ const SECRET_PATTERNS = [
 const FAKE_SECRET_ALLOW = [
   /example-token/i, /OLD_token_value/i, /NEW_token_value/i, /test-token/i, /SECRET-TOKEN/i,
   /<[^>]{1,40}>/, /placeholder/i, /dummy/i, /^[?&]token=x?abc$/i,
+  // `!dlptest` 现场自检的**故意样例**（lib/bridge.js 里紧跟着"不回显样例原文"的注释）：
+  // 字母表序列拼的（大 A 小 b…接数字连写再接下段字母），是假值但形态完全合规，只能逐条放行。
+  // 下面紧跟着一条断言保证它还在代码里，避免白名单变成永久放水的空壳。
+  /^sk-proj-AbCdEf0123456789GhIjKlMn$/,
 ]
 const isFakeSecret = (match) => FAKE_SECRET_ALLOW.some((re) => re.test(match))
 const secretHits = []
@@ -346,6 +367,15 @@ for (const { name, text } of textFiles) {
   }
 }
 check('没有密钥形态的字符串', secretHits.length === 0, [...new Set(secretHits)].slice(0, 5).join(' | '))
+// 白名单只允许放行"确实存在于被测代码里的故意样例"。样例被删了而白名单留着，
+// 明天就会有人往里塞真 key —— 那时白名单已经是"反正可以加"的垃圾桶了。
+{
+  const bridgeText = textFiles.find(({ name }) => name === 'lib/bridge.js')?.text ?? ''
+  const dlptestSample = /'原样密钥', '([^']+)'/.exec(bridgeText)?.[1] ?? ''
+  check('密钥白名单里的样例确实还在代码里（白名单不是空壳）',
+    dlptestSample === 'API_KEY: sk-proj-AbCdEf0123456789GhIjKlMn',
+    dlptestSample === '' ? '在 lib/bridge.js 里找不到 !dlptest 的样例' : dlptestSample.slice(0, 60))
+}
 
 // 配置 schema 里所有"密钥类"字段的默认值必须是空串/占位（真实值只应存在于机器本地配置）
 const schema = textFiles.find(({ name }) => name === 'lib/index.js')?.text ?? ''
@@ -370,6 +400,7 @@ function gitignoreMatcher(text) {
   const rules = String(text).split(/\r?\n/).map((line) => line.trim()).filter((line) => line && !line.startsWith('#') && !line.startsWith('!'))
   const globToRe = (body) => body
     .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+    // `**` 先占位再还原（占位还原必须带 g：旧实现漏了，第二个 `**` 会被当成普通 `*`）
     .replace(/\*\*/g, '\u0000').replace(/\*/g, '[^/]*').replace(/\u0000/g, '.*').replace(/\?/g, '[^/]')
   // 按 git 的真实语义编译（旧实现把 `qq-*/` 去掉末尾斜杠后当成文件模式，
   // 于是 `qq-badwords.txt` 被误判为"已忽略"——正是这个假阳性掩盖了真实缺口）：
@@ -379,14 +410,37 @@ function gitignoreMatcher(text) {
   const compiled = rules.map((pattern) => {
     if (pattern.endsWith('/')) return new RegExp(`(^|/)${globToRe(pattern.replace(/\/+$/, ''))}/`)
     if (!pattern.includes('/')) return new RegExp(`(^|/)${globToRe(pattern)}(/.*)?$`)
-    return new RegExp(`^${globToRe(pattern)}(/.*)?$`)
+    // 含 `/` 的模式在 git 里是**从仓库根锚定**，但候选路径本身不带前导斜杠
+    // （`qq-inbox.jsonl` 而不是 `/qq-inbox.jsonl`）。旧实现直接把 `/qq-*` 编成
+    // `^/qq-…`，于是根锚定规则**一个都匹配不上**——.gitignore 里写了 `/foo` 也判"未忽略"。
+    return new RegExp(`^${globToRe(pattern.replace(/^\/+/, ''))}(/.*)?$`)
   })
   return (candidate) => compiled.some((re) => re.test(candidate))
 }
+const hasGitignore = existsSync(join(repo, '.gitignore'))
 const ignoreText = (() => { try { return readFileSync(join(repo, '.gitignore'), 'utf8') } catch { return '' } })()
+/**
+ * 没有 .gitignore 要分两种情形判，不能一刀切：
+ *   · **git 仓库里没有** → 真缺口（产物一次 `git add .` 就进去了），必须红；
+ *   · **解包副本里没有** → npm 打包**总是**排除 .gitignore，这个环境也没有 git，
+ *     "会不会被提交"无从谈起。此时报 SKIP，并换一条能在副本里真跑的判据：
+ *     副本里本来就不该有运行产物。既不放行也不假装通过。
+ */
+if (!hasGitignore) {
+  check('git 仓库里必须有 .gitignore（解包副本除外）', listed.source !== 'git',
+    listed.source === 'git' ? '仓库根缺少 .gitignore：运行产物一次 git add . 就提交了' : `来源 ${listed.source}（解包副本）`)
+  if (listed.source !== 'git') {
+    // 不要顺手加一条"副本目录里没有 qq-* 文件"当替代判据：运行时目录本来就是**工作目录**，
+    // `qq-control.json`（含控制台 token 的活配置）本来就在那儿，那样判必然误报。
+    // 这个环境真正无从判定的是"会不会被提交"——没有 git，就没有提交。
+    console.log('SKIP 这个副本没有 .gitignore（npm 打包会排除它），跳过"被忽略"的双重判定')
+  }
+}
 const ignoredByText = gitignoreMatcher(ignoreText)
 const ignoredOk = []
+const canJudgeIgnore = hasGitignore || listed.source === 'git'
 for (const artifact of RUNTIME_ARTIFACTS) {
+  if (!canJudgeIgnore) break
   let ignored = ignoredByText(artifact)
   if (listed.source === 'git') {
     try {
@@ -396,7 +450,9 @@ for (const artifact of RUNTIME_ARTIFACTS) {
   }
   if (!ignored) ignoredOk.push(artifact)
 }
-check('所有运行产物都被 .gitignore 覆盖（文本判定 + git 交叉核对）', ignoredOk.length === 0, ignoredOk.slice(0, 6).join(', '))
+if (canJudgeIgnore) {
+  check('所有运行产物都被 .gitignore 覆盖（文本判定 + git 交叉核对）', ignoredOk.length === 0, ignoredOk.slice(0, 6).join(', '))
+}
 const trackedArtifacts = tracked.filter((name) => /^qq-/.test(name))
 check('没有任何运行产物被跟踪/在包里', trackedArtifacts.length === 0, trackedArtifacts.join(','))
 check('qq-control.json 未被跟踪（含控制台 token）', !tracked.includes('qq-control.json'))

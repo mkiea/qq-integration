@@ -1,11 +1,26 @@
-# dsh-qq-onebot-bridge
+# qq-integration
 
-A bidirectional QQ ↔ DeepSeek Harness bridge plugin (independent bundle). QQ messages drive DSH agent sessions directly, and agent replies are sent back to QQ automatically.
+A bidirectional QQ ↔ DeepSeek Harness bridge plugin (independent bundle, maintained as our own plugin). QQ messages drive DSH agent sessions directly, and agent replies are sent back to QQ automatically.
+
+> The npm package name `dsh-qq-onebot-bridge` is the DSH host's loading contract (kept as-is); the project identity, folder and releases use "qq-integration".
+> The control console is an **independent process** (`http://127.0.0.1:8880/`, no dsh dependency; start it with `control/bin/qq-control.mjs`).
+
+### This is an **integration** plugin
+
+It does **not** implement the QQ protocol itself. It wires three things together:
+
+| Integrated | What this package provides | What it does **not** contain |
+|---|---|---|
+| **OneBot v11** (protocol layer) | Reverse-WS server, event dispatch, action calls, @ parsing, forward messages — reused from upstream `dsh-qq-onebot-bridge` and maintained here | QQ login, protocol codec, packet I/O (all of that lives in the OneBot implementation) |
+| **A OneBot implementation** (QQ side) | Works with any v11 implementation: Waylay / NapCat / LLOneBot / OpenShamrock / Lagrange / go-cqhttp | No implementation binaries are bundled or redistributed |
+| **Waylay** (current default) | **Built-in** start / stop / status reading (`lib/waylay-launch.js` + `/api/waylay*` + the panel's "Start Waylay") | The Waylay binary and its injection DLL (users install those themselves) |
+
+Provenance, license and the exact reuse boundary are documented in [`NOTICE.md`](NOTICE.md); the upstream MIT copyright line is kept verbatim in `LICENSE`.
 
 ## Architecture
 
 ```
-QQ client ←→ OneBot implementation (NapCat / LLOneBot / OpenShamrock / Lagrange…)
+QQ client ←→ OneBot implementation (Waylay [current default] / NapCat / LLOneBot / OpenShamrock / Lagrange…)
                 │ reverse WebSocket (the OneBot side connects to us)
                 ▼
       dsh-qq-onebot-bridge (this plugin)
@@ -38,7 +53,7 @@ Restart `dsh web` after install/uninstall.
 
 ### Official desktop client (DSH Desktop)
 
-The official desktop client (the Electron `DeepSeek Harness.exe`) boots the `~/.dsh/profiles/desktop` profile, which is **managed exclusively by the application** (the CLI refuses `dsh --profile desktop`). It runs **the same DSH runtime version as the CLI**, so since v0.5.9 this plugin declares peer ranges covering both `^0.1.x` and `^0.2.0-rc.2`: either side installs it directly, with **no `dsh plugin allow-version` exemption needed**.
+The official desktop client (the Electron `DeepSeek Harness.exe`) boots the `~/.dsh/profiles/desktop` profile, which is **managed exclusively by the application** (the CLI refuses `dsh --profile desktop`). It runs **the same DSH runtime version as the CLI**, this plugin declares peer ranges covering both `^0.1.x` and `^0.2.0-rc.2`: either side installs it directly, with **no `dsh plugin allow-version` exemption needed**.
 
 Installation is the same, through the desktop client's plugin manager:
 
@@ -48,7 +63,7 @@ Installation is the same, through the desktop client's plugin manager:
 
 > When installing a local directory by hand (outside the marketplace), note that the dependency alone is not enough: **`dsh-qq-onebot-bridge` must also be listed in that profile's `package.json` under `dsh.profile.bundles`**, otherwise the loader never mounts it — it shows up as an installed dependency but does nothing (measured on this machine). A marketplace install does this for you.
 
-> ⚠️ **Only one instance per machine may host the QQ bridge**: the web host and the desktop client can both install this plugin, but they compete for the same OneBot port (6700 by default) and only one can bind it — the other reports the true reason and **retries every 15 seconds**, taking over automatically once the port is free (since v0.5.9 it neither crashes nor blocks host startup). **Do not "just give the other profile a different port" to run both**: they share one `cwd` (`qq-sessions.json`, `qq-memory/`, `qq-reminders.json`, points and stats all live there), two instances writing it will clobber each other, and with `injectDryRun:false` queued injections would really be sent twice. To pin one host, **enable the plugin in only one profile** (remove it from the other's `dsh.profile.bundles`), or give it a different `cwd` as well.
+> ⚠️ **Only one instance per machine may host the QQ bridge**: the web host and the desktop client can both install this plugin, but they compete for the same OneBot port (6700 by default) and only one can bind it — the other reports the true reason and **retries every 15 seconds**, taking over automatically once the port is free (it neither crashes nor blocks host startup). **Do not "just give the other profile a different port" to run both**: they share one `cwd` (`qq-sessions.json`, `qq-memory/`, `qq-reminders.json`, points and stats all live there), two instances writing it will clobber each other, and with `injectDryRun:false` queued injections would really be sent twice. To pin one host, **enable the plugin in only one profile** (remove it from the other's `dsh.profile.bundles`), or give it a different `cwd` as well.
 
 ## Toggling features from DSH Settings (v0.6 "QQ助手")
 
@@ -56,15 +71,15 @@ After installing the plugin and **restarting the host once** (so the panel route
 
 - **Six everyday groups are laid out directly**: **AI account & allowlists** / chat basics / **limits: inbound / outbound** / **quiet hours** / group-ops toolbox / fun & interaction / voice & media; safety, record & notify, experimental and advanced start collapsed under "advanced". 11 groups, **65 switches + 11 numeric fields + 1 time-range list + 2 allowlists**, curated from 225 config keys; a **search box** at the top filters by Chinese label / config key.
   - The two rate limits share one group, ordered the way the pipeline runs, precisely so they are not confused: **per-minute inbound turn cap** (drops the message *before* it reaches the model, saving quota) versus **outbound reply rate limit** (the model already answered; the reply is dropped *before it is sent*, protecting against QQ-side throttling). Both are **off by default** and can be enabled independently.
-  - **Quiet hours (v0.6.8)**: the feature existed but could only be reached by editing YAML; the whole thing is now in the panel — the switch, **weekend exemption**, and the **quiet-window list** (two native time inputs per window, overnight ranges such as `22:00-6:00`, up to 8 windows).
-  - **AI account & allowlists (v0.6.8)**: this group answers "which bot account is this, and who does it answer" — the **AI account** (`botQq`, used for @-detection and pokes), **no allowlist (answer everyone)**, the two gate switches, and the `allowUsers` / `allowGroups` lists (**an empty list denies everything**). Turning "no allowlist" on makes the bot answer **every private chat and every group**, while **the @ requirement in groups stays** (that is `replyOnlyWhenMentioned`). The lists used to be YAML-only; they are edited in the panel now (input plus an add button, numbers written as **numbers** because string ids would never match), with a one-click "recent chats" shortcut, and both list rows are marked as inactive while "no allowlist" is on.
-- **Numeric fields (v0.6.7)**: the risk-control thresholds no longer require editing YAML by hand — **per-minute turn value** (switch **off by default**, value 1–10 default 5), the outbound reply cap and its window, the dedup window, the four anti-flood thresholds, the poke-per-hour cap and the report window are edited in the panel with `− value +`. **Ranges and steps are read from the schema** (never copied into the panel), and out-of-range or fractional values are rejected with a 400 that names the allowed range.
+  - **Quiet hours**: the feature existed but could only be reached by editing YAML; the whole thing is now in the panel — the switch, **weekend exemption**, and the **quiet-window list** (two native time inputs per window, overnight ranges such as `22:00-6:00`, up to 8 windows).
+  - **AI account & allowlists**: this group answers "which bot account is this, and who does it answer" — the **AI account** (`botQq`, used for @-detection and pokes), **no allowlist (answer everyone)**, the two gate switches, and the `allowUsers` / `allowGroups` lists (**an empty list denies everything**). Turning "no allowlist" on makes the bot answer **every private chat and every group**, while **the @ requirement in groups stays** (that is `replyOnlyWhenMentioned`). The lists used to be YAML-only; they are edited in the panel now (input plus an add button, numbers written as **numbers** because string ids would never match), with a one-click "recent chats" shortcut, and both list rows are marked as inactive while "no allowlist" is on.
+- **Numeric fields**: the risk-control thresholds no longer require editing YAML by hand — **per-minute turn value** (switch **off by default**, value 1–10 default 5), the outbound reply cap and its window, the dedup window, the four anti-flood thresholds, the poke-per-hour cap and the report window are edited in the panel with `− value +`. **Ranges and steps are read from the schema** (never copied into the panel), and out-of-range or fractional values are rejected with a 400 that names the allowed range.
 - **Every row is explicit**: Chinese label, one line on what turning it off does, and the **config key name** (so you can find the same key in the file), with a toggle on the right and `非默认` / `更新中` badges when the value differs from the schema default or from what the running plugin currently uses.
 - **One click writes it**: only this plugin's own config block inside the profile's `cordis.patch.yml` (other entries and comments are preserved), keys outside the whitelist or non-boolean values are rejected, and the write is a **temp-file-then-rename atomic replace** with a `.bak-qqai` backup.
 - **How it applies**: DSH hot-reloads that plugin entry (the QQ bridge reconnects for a second or two); if hot reload is off, restart the host.
 - **Hosts without a web server** (e.g. the TUI profile) simply have no such page — the `ctx.inject(['webServer'])` block never runs there and the plugin works as usual.
-- **The bottom of the page links the changelog and the debug entry points**: `更新日志（v0.6.0）` (the GitHub `CHANGELOG.md`), `调试文档` (the README debugging section) and `调试台（独立控制台）`. The addresses are derived from `package.json` / `qq-control.json`.
-  - **The console is a separate process and the plugin never starts it for you**: the panel probes `127.0.0.1:8799` and says `运行中` or `未启动` truthfully; when it is down, that row prints the exact command to start it.
+- **The bottom of the page links the changelog and the debug entry points**: `更新日志` (the GitHub `CHANGELOG.md`), `调试文档` (the README debugging section) and `调试台（独立控制台）`. The addresses are derived from `package.json` / `qq-control.json`.
+  - **The console is a separate process and the plugin never starts it for you**: the panel probes `127.0.0.1:8880` and says `运行中` or `未启动` truthfully; when it is down, that row prints the exact command to start it.
   - The 调试台 link goes through the host's `/qqai/console`: when the console is up it 302s to the **tokenized** address (no manual token copying), and when it is down it returns a page telling you which command to run — no more "clicked it and it just would not connect". The token is read server-side only and never appears in the panel payload.
 
 > Need a key that is not on the panel? Edit the profile's `cordis.patch.yml` directly (the panel header shows which file that is). The panel deliberately exposes only the everyday switches instead of being a general config editor.
@@ -223,24 +238,21 @@ ws://127.0.0.1:6700/
 
 Other implementations work the same way (LLOneBot: reverse WebSocket; OpenShamrock: passive WebSocket; go-cqhttp: `ws-reverse`). If `accessToken` is set, use the same token on the OneBot side.
 
-### Launching NapCat, and what the errors mean (v0.6.5)
+### Launching/stopping Waylay, and what the errors mean
 
-**Being online only requires NapCat to dial 6700** — it does not require you to launch it from here. Signing in / scanning the QR code usually does.
+**Being online only requires the injected QQ to dial 6700** — it does not require you to launch it from here. Signing in / scanning the QR code usually does.
 
-- **No path to copy by hand**: the DSH panel's 快捷操作 → 启动 NapCat and the console's 启动 NapCat **detect** the usual install
-  locations (`%LOCALAPPDATA%\Programs\NapCat\bootmain\`, `%ProgramFiles%\NapCat\bootmain\`, `~\.dsh-qq\`). Only if none of
-  them exists do you have to fill one in: console → 配置 → NapCat 启动脚本 = `…\NapCat\bootmain\launcher.bat`
-  (**not** the sibling `napcat.bat`: in this NapCat build that one only starts the loader and `pause`s, and exits doing
-  nothing). The console and the DSH panel read the **same** `qq-control.json`, so filling it once covers both.
-- **Both generated files live in your working directory** (`cwd` in `qq-control.json`): `qq-napcat-launch.cmd` (the
-  **shim script** — written the moment you press 启动 NapCat, so it is not shipped in the package and you will not find it
-  in the plugin folder) and `qq-napcat-launch.log` (the elevated window is hidden, so the launcher's output ends up here).
-- **Success is judged by the heartbeat line** in that log (`=== shim start … ===`). When the elevation hop is silently
-  refused, powershell still exits 0 and 6099 may still be listening (NapCat was already up), so only the heartbeat proves
-  the command actually landed. Without it the UI says "nothing happened this time" — restart the console/host **as
-  administrator**, or right-click `launcher.bat` → Run as administrator.
-- **With `ConsentPromptBehaviorAdmin=0` elevation never prompts**, so seeing no UAC dialog is normal.
-- **Reading "桥：无快照" (no snapshot)** (hover for the full explanation since v0.6.5): ① the snapshot stopped N minutes ago
+- **No path to copy by hand**: the DSH panel's 快捷操作 → 启动 Waylay and the console's 启动 Waylay read the
+  **same** `qq-control.json` (`waylayBat`, usually `_tmp\rin-inject\rin-waylay.bat` or its folder); fill it in once, both work.
+- **Everything next to the entry bat is auto-generated**: the inject log and the QR image (`qrcode.png`) live in the bat's
+  folder — not shipped in the package, so do not look for them inside the plugin folder. A QR older than 5 minutes is
+  treated as stale — press 停止 then 启动 to walk the login again.
+- **Success has two layers**: 13000 listening = the process is up; `logged_in` from `/api/status` = the session is ready.
+  The panel shows the two **separately** (measured: the port stayed up while `logged_in` was false and sending returned
+  1006501) — judging by the port alone reports "all good" when it is not.
+- **「停止」means ending the QQ that listens on 13000**: resolve the PID by port, verify the image name, guard against
+  self-kill — **never kill by image name**, your other QQ clients are untouched. No QQ window after injection is normal.
+- **Reading "桥：无快照" (no snapshot)** (hover for the full explanation): ① the snapshot stopped N minutes ago
   ⇒ the bridge stopped or the plugin was disabled; ② the host is not running ⇒ the snapshot is written by the plugin inside
   the host; ③ the host is running but nothing writes a snapshot ⇒ the plugin is not enabled, or **the plugin's working
   directory differs from the console's** (the plugin writes `<its own cwd>\qq-runtime.json`; starting the host from the
@@ -277,7 +289,7 @@ Notes:
 - Dropping image files into `cwd/qq-faces/` registers them as sendable stickers automatically (file name = sticker name); deleting a file removes it
 - With `autoCollectStickers=true`, image stickers from incoming messages are collected automatically
 
-## Extension seams (v0.7.0)
+## Extension seams
 
 Other plugins in the same host can send a message, observe traffic and add tools **without patching this plugin** —
 but there is no second path around the guards:
@@ -317,7 +329,7 @@ if (api.instanceId !== lastInstanceId) { lastInstanceId = api.instanceId; reRegi
 - **Tool providers are experimental and off by default**: additive only (the 10 built-in `qq_*` tools cannot be
   overridden), a throwing provider is skipped alone, caps of **16 tools / 4 sections** per provider and **40 / 12** in
   total, and everything injected or skipped is traced. **Third-party extension behaviour is outside this project's support scope.**
-  (The tool cap went from 8 to 16 in v0.7.1: a real user splits tools into one package per topic and was hitting 8 exactly.
+  (The tool cap went from 8 to 16: a real user splits tools into one package per topic and was hitting 8 exactly.
   Sections stay at 4 — those are a fixed per-message cost.)
 - **Three things to watch when writing a provider** (① is a third-party field report; ②③ were checked against the host source):
   ① **Never mutate `agentCtx.tools`** (e.g. assigning to `.register`). Behind it is the host's **shared** `ToolRuntime`
@@ -334,7 +346,7 @@ if (api.instanceId !== lastInstanceId) { lastInstanceId = api.instanceId; reRegi
   ③ That `restrict()` is only half silent: names must be **known global tools** — a typo, an empty filter, `run_code`, or a
       scope-local name **throws** (`unknown global tool` / `requires a scoped context` / `is a no-op`).
       Prefer `deny`, or filter in your own view, instead of touching the shared runtime.
-- **Four more provider rules** (v0.7.3, from the first real third-party plugin — see issue #4's `ext/README.md`):
+- **Four more provider rules** (from the first real third-party plugin — see issue #4's `ext/README.md`):
   ① **Parameters must be standard JSON Schema.** When you return a bare tool object, the host validates it with
      `assertSupportedJsonSchema`: `required: true` inside a property is **rejected** — use a top-level `required: ['name']`
      array. Returning `defineTool({...})` gives you exactly that shape (recommended).
@@ -379,11 +391,11 @@ Once something is public and used, it cannot be renamed casually — so the rule
 
 ### About forks: upstream is a single line
 
-- **This repository maintains `main` plus tags only** (e.g. `v0.7.4`). A GitHub fork is **someone else's copy**: it is not an
+- **This repository maintains `main` plus tags only** (e.g. `v0.1.0`). A GitHub fork is **someone else's copy**: it is not an
   upstream branch and never lands here automatically — no matter how many commits a fork has, this `main` is unaffected.
 - **We do not merge or rebase other people's fork history**: those commits follow their author's own rhythm and folding them in
   would make the history unreadable. Contribute via an issue or a PR (a small PR is fastest); maintaining your own line is
-  perfectly fine too — rebase on our tags. We will not copy your commit history, but **ideas are fair game** (v0.7.4's taint
+  perfectly fine too — rebase on our tags. We will not copy your commit history, but **ideas are fair game** (the taint
   window came from issue #4's patch branch).
 - Install from **this repository or the npm package**, not from an arbitrary fork — the code there may be modified, while the
   README and CHANGELOG describe this line only.
@@ -396,7 +408,7 @@ Once something is public and used, it cannot be renamed casually — so the rule
 
 - `/new`: end the current session and start a fresh one
 - `/status`: show the current session state and session id prefix
-- **`/why` (v0.6.9)**: why a message got no reply — quote it and send `/为什么` (or `/为什么 <messageId>`, or no
+- **`/why`**: why a message got no reply — quote it and send `/为什么` (or `/为什么 <messageId>`, or no
   argument for the newest message in this chat) and the trace decision chain is rendered as
   `inbound ✅ → allowlist ✅ → quiet hours ⛔` plus "blocked at 「quiet hours」: …". Admins only in groups; it prints
   stages and reasons, never the message text.
@@ -409,13 +421,13 @@ Once something is public and used, it cannot be renamed casually — so the rule
 - **[docs/DEBUG.en.md](docs/DEBUG.en.md)** — debugging: trace, offline replay, event injection, one-shot diagnostics, diagnostic bundles, acceptance page
 - **[docs/FEATURES.en.md](docs/FEATURES.en.md)** — v0.5 details: merged-forward expansion, `/文件` `/取` `/相册` `/ocr`, per-day archive and `/找`, members and group info, reactions
 
-## Standalone control console (`control/`, v0.4.0)
+## Standalone control console (`control/`)
 
 The plugin ships an independent local operations console that does **not** depend on DSH Desktop: it keeps working when the host is down, and shows every port and process at a glance.
 
 ```sh
 
-# starts on http://127.0.0.1:8799 and prints the tokenised URL
+# starts on http://127.0.0.1:8880 and prints the tokenised URL
 
 npm run control            # or: node control/bin/qq-control.mjs --open
 
@@ -425,8 +437,8 @@ npm run control            # or: node control/bin/qq-control.mjs --open
 
 | Capability | Detail |
 |---|---|
-| Port overview | listening state, owning PID and process name for console 8799 / host 3080 / OneBot 6700 / NapCat 6099 / GPT-SoVITS 9880; the connection count on 6700 *is* the "bot online" signal |
-| Start / stop | start, stop and restart the host (always with `--no-open`, logs appended to `qq-host-out.log` / `qq-host-err.log`), start/stop NapCat and QQ, start/stop GPT-SoVITS, stop everything at once |
+| Port overview | listening state, owning PID and process name for console 8880 / host 3080 / OneBot 6700 / Waylay 13000 / GPT-SoVITS 9880; the connection count on 6700 *is* the "bot online" signal |
+| Start / stop | start, stop and restart the host (always with `--no-open`, logs appended to `qq-host-out.log` / `qq-host-err.log`), start/stop Waylay (stop = kill the QQ that **listens on 13000**, never by image name), start/stop GPT-SoVITS, stop everything at once |
 | Start pre-flight | checks 3080/6700 first and refuses to start with "port ← process#PID" instead of failing silently |
 | Free a port | one-click `taskkill /T /F` for the process owning a watched port (guard rail: only watched-port owners and known bot processes, never an unrelated PID) |
 | Logs | host stdout / stderr / bridge debug log with live follow and line count |
@@ -463,7 +475,7 @@ node test/replay-live.mjs
 # 3) live scripts (host/console already running; they impersonate the OneBot client on 6700)
 
 node test/live-e2e.mjs        # message -> reply, full path
-node test/live-stream.mjs     # event stream / decision chain / diagnosis endpoints (console 8799)
+node test/live-stream.mjs     # event stream / decision chain / diagnosis endpoints (console 8880)
 node test/replay-live-host.mjs --token <console token>   # record -> offline replay -> injection
 ```
 
@@ -527,21 +539,12 @@ Debugging usually means sending logs to someone else, so the plugin is explicit 
 | The repository | contains no keys, passwords or real QQ ids: secrets live only in your DSH profile config (outside the repo), and `test/privacy-unit.mjs` re-scans every tracked file on each test run (the private ids are read from your machine-local config or `DSH_QQ_PRIVATE_IDS`, never stored in the test) |
 | Console | binds `127.0.0.1` only, every endpoint needs the token (kept in the ignored `qq-control.json`), cross-site Origins are rejected |
 
-> Deployment fact: this plugin is a **DSH bundle** and runs inside a DSH profile; official peer dependencies (`@deepseek-ai/dsh-*`, `@deepseek-ai/schemastery`) are installed together with the profile. **Official packages must be imported by their full scoped name**: the unscoped `schemastery` is a different package (3.18.0) that only resolved when another plugin happened to hoist it into the shared node_modules — which is how `lib/` was written up to v0.4.0, and it fails with `ERR_MODULE_NOT_FOUND` on a clean install ([issue #1](https://github.com/cheesehaqi/dsh-qq-onebot-bridge/issues/1)); it now uses the scoped name, enforced statically by `test/static-unit.mjs` (a bare or undeclared import fails the test). `ws` is an ordinary runtime dependency, so a local-directory install needs the `npm install` step above. Copying `lib/` out and running it standalone still will not work by design.
+> Deployment fact: this plugin is a **DSH bundle** and runs inside a DSH profile; official peer dependencies (`@deepseek-ai/dsh-*`, `@deepseek-ai/schemastery`) are installed together with the profile. **Official packages must be imported by their full scoped name**: the unscoped `schemastery` is a different package (3.18.0) that only resolved when another plugin happened to hoist it into the shared node_modules — which is how `lib/` was written in early versions, and it fails with `ERR_MODULE_NOT_FOUND` on a clean install ([issue #1](https://github.com/cheesehaqi/dsh-qq-onebot-bridge/issues/1)); it now uses the scoped name, enforced statically by `test/static-unit.mjs` (a bare or undeclared import fails the test). `ws` is an ordinary runtime dependency, so a local-directory install needs the `npm install` step above. Copying `lib/` out and running it standalone still will not work by design.
 
 ## Changelog
 
 The five most recent versions (always kept rolling):
 
-- **v0.7.23** — "console layout rework + live UI reload + a tidier QQ-assistant panel" (local fork change, not an upstream release). The owner said "the console is a bit of a mess, and the QQ-assistant one too". (1) **Structure**: 13 flat sections folded into 5 collapsible groups (overview / live / diagnostics / data / login); the reflow script `_reflow_ui.py` only moves blocks (never edits inside them) and asserts the `<section>` count is unchanged (16=16). (2) **Collapsed must not mean hidden**: the diagnostics group auto-opens once when a real ❌ appears, the login group auto-opens once while the bot is offline and a QR flow is in progress, and `#pageErrors` / `#warnCard` open their group when they need to be seen (`display=''` inside a closed `<details>` used to mean "still invisible"). Auto-open happens once; if the user closes it again it stays closed. (3) **Collapsed groups do no work**: the seven "data" endpoints now load on first expand and are not polled while closed. (4) **Destructive actions wrapped in `.danger-zone`** (stop host / NapCat / SoVITS / stop everything) instead of sitting next to the start buttons. (5) **Two real defects, both measured**: **the first 41px of every group's first card was covered by its header bar** — `overflow:hidden` on `.group` (used for rounded corners) makes it a scroll container, so the summary's `position:sticky;top:41px` applies at scroll position 0: the bar moves down 41px while its flow position stays put and it covers the content below (that is why the "运行快照" h2 seemed to vanish; measured: summary y=136 / card y=134 before, 95/134 after); and **long Windows paths did not wrap**, pushing cards off-screen (`overflow-wrap:break-word` on `body`, port table scrolls horizontally on narrow screens). Also `.cols` switched to `align-items:stretch` and the status pills became "dot + outline" instead of solid green. (6) **Live UI reload**: `ui.html` used to be read once at startup and then served from memory forever, so editing it had no visible effect on refresh (a great way to conclude "I broke something"); `createControlServer` now takes `uiFile`, compares mtime per request, re-reads only when it changes, and keeps the last good copy if the read fails. (7) **QQ-assistant panel**: the two long note paragraphs (write path / scope) moved into a collapsed `<details>`, so the switches are no longer pushed below the fold; the order of the five footer links is **unchanged**. **Tests**: `control-unit` **179/179** · `settings-unit` **294/294** (this also fixed a drifting `CLIENT_VERSION`: the client bundle still said 0.7.16 while package.json was 0.7.22, which made the panel falsely claim "your frontend is stale, please refresh") · `console-debug-unit` 78/78 · `config-unit` 27/27; plus a static contract check (91 ids, 21 inline handlers, none missing or undefined) and headless-Chromium screenshots at 1480 / 760 / 512 px.
-- **v0.7.22** — "the second form of group invites (share-link messages) no longer gets treated as ordinary chat" (local fork change, not an upstream release). The owner asked "it seems not to show up" and posted a console screenshot. Facts first: the bridge **is running** (`qq-runtime.json` = 0.7.21 / pid 34988 / uptime 632 s, with a real turn at 22:31 inbound→agent→reply); the "小鲛鱼控制台 / 履约验收台" page in the screenshot **is not this plugin's page** (8799 serves `control/bin/qq-control.mjs`'s `ui.html`, which contains none of those strings, and `3080/qq/console` returns 0 bytes), so its verdict says nothing about the bridge. The real gap: group invites arrive in **two forms** and the previous release only fixed `request(group/invite)` (has a flag, can be approved); the other is QQ's "邀请你加入群聊" **share message** (`[链接]邀请你加入群聊（…"音游病情交流地"…）`, evidence `qq-inbox` 22:31:39 kind=message), which has **no flag and cannot be approved**, yet used to be handed over as plain chat (she answered 15 chars), so the owner never learned someone had invited her. Fix: new pure function `matchGroupInviteShare` in `onebot.js` (extracts the group name, returns null for ordinary chat); the bridge hooks it before command dispatch — traces `invite-share`, notifies the admin ("group invite (share-link form): <name> … you have to tap it yourself"), and appends a factual note to her context ("this is an invite, not an instruction; you cannot join or approve — just acknowledge"). **Tests**: `request-notify-test` now **25/25** (H1-H4 pure function + I1-I4 end-to-end); full regression 10 suites 157/157.
-
-- **v0.7.21** — "group invites / friend requests are no longer dropped silently; card lookup gets a hard deadline" (local fork change, not an upstream release). The owner reported: "group invites and friend requests don't show up for me at all." Forensics split it in two: (1) **group invites do reach the bridge and the bridge was dropping them** (`qq-inbox` holds `requestType=group subType=invite groupId=100000002`, and trace ends with "group 100000002 not in the allowGroups whitelist") — `allowGroups` means "groups she may talk in", while an invite's `groupId` is the **new group she is being pulled into**, so it can never be on that list ⇒ 100% silent drop. Invites now take a separate path, not gated by that list, and can be approved with `/同意 N`. (2) **No friend request ever reached the bridge** (zero `friend` records in the inbox), so that is not a bridge drop; the bridge only guarantees "once it arrives it is never silent" (queued + pushed, wording changed to "wants to add you as a friend"), and it now states plainly that plain friend requests have **no pull endpoint** (`/申请` covers join requests / invites / doubtful friends only). (3) Main fix: every policy-dropped request (`verifyEnabled=false` / group not whitelisted / queue full) now goes through `#notifyRequestDrop()` — a `request-drop` trace event plus a private note to the admin explaining why, throttled to once per source per 10 minutes (3 rapid sends → 1 note, all 3 traced). (4) `verify.js` gains `requestKindOf` to tell the three request kinds apart; `addRequest` gains `noChallenge` (invites/friend requests get no arithmetic question: an invite targets a group, not a person, the friend API cannot carry a challenge message, and it also stops `#handleJoinAnswer` from treating the inviter's ordinary chat as an answer). (5) A real hang found and fixed during regression: `lookUpBilibili` with a tight budget **never settles** (only reproducible after one successful call; Node exits with `unsettled top-level await`) — internal budget arithmetic cannot guarantee a return, so an **outer `Promise.race` hard deadline** was added (+250 ms, timer deliberately not unref'd); when it fires the result is treated as "not found" (null), never as success. **Tests**: new `request-notify-test.mjs` **17/17**; `card-pollution-test` 18/18 stable across three runs (it hung every time before the fix); full regression card-look 24/24 · card-enrich 22/22 · file-canary 19/19 · split-sentence 16/16 · forward-media 14/14 · file-save 11/11 · inbound-media 26/26 · voice-pipeline 5/5 · video-frames 2/2.
-
-- **v0.7.20** — "file-chain canaries + outbound permission audit; message splitter no longer breaks code or quoted closing marks" (local fork change, not an upstream release). Owner's call: "write permission is limited to files the user sent; plant more canaries", plus a live bug report: sending `print("Hello, World!")` got split with `")` alone in the next bubble ("the right-hand symbols wrap onto the next line"). (1) **The 'cannot read files' issue is closed as a capability gap, not a gate block** (her 49 tools never included read/write/bash) — every "you can read it directly" wording is made honest (private-file note, quoted-file line, system prompt `inputGuide`), and a data bug is fixed: quoted `file` segments dropped the `path` field, so the local-path fallback could never trigger. (2) **Permission boundary**: inbound files are registered in `inboundFileSet`; every outbound file now records a trace event (stage `file-out`, stating "file sent by this session's user" or "not a user-sent file"; the hard gate remains the directory whitelist). (3) **Canaries**: sentinel `_canary-请勿动我.txt` files in `qq-files/` and `qq-images/` (self-describing, carrying the `cny-*` instance canary; outbound sends of them are hard-refused; rewritten each restart to refresh mtime), and each file note carries a unique audit canary `CF-<8hex>` traced at stage `file-note`. (4) **Message splitter**: cut points consume adjacent closing quotes/brackets; code-suspect lines (punctuation wrapped in quotes/brackets with letters/digits before it) are never split; `」` followed by prose is a mid-sentence quote (no cut) while `」` followed by `「` is (chained quotes); half-width `!` glued to non-whitespace (URLs) does not cut; bare full-width punctuation keeps the old behavior. **Tests**: new `file-canary-test.mjs` **19/19** + `split-sentence-test.mjs` **16/16**; full regression forward-media 14/14 · card-enrich 22/22 · file-save 11/11 · card-look 24/24 · card-pollution 18/18 · inbound-media 26/26 · voice-pipeline 5/5 · video-frames 2/2. (Also backfilled here: the v0.7.19 entry was missing from this English changelog — see the Chinese README.)
-- **v0.7.19** — "forwarded images attached for real + small text files inlined" (local fork change, not an upstream release). Owner's screenshot exposed: (a) images inside forwarded/quoted chat records showed only "[图片]" placeholders; (b) she claimed a received file "couldn't be opened, paste the contents". Forensics first cleared the transfer: NapCat metadata `size:"15"` matched the 15-byte file on disk ("笨笨大肥鱼"; the "150" in the UI is not a byte count) — the real problem was **she answered 4 seconds later with zero tool calls**, so "you can read it directly" was an empty promise. Fix: `forward.js` (kept pure) `normalizeNode` collects image/mface segments carrying http(s) URLs and no-longer skips image-only nodes; `#expandForwards` downloads them for real (4-image cap, honest failure/overflow counts) and attaches via `#imageBlocksFor(files, 4)`, with blocks piped to both the main-message and quote paths and the outcome written into the text (including "image contents are quoted data"); `#handlePrivateFiles` inlines UTF-8 text files ≤`fileTransferInlineMaxBytes` (new key, default 4096) through the `dataBlock` fence, while binary/oversized files get an honest "contents not shown — do not pretend"; the file-note header is reworded per whether contents were shown; sizes read naturally (15 B / 1.5 KB). The video stream itself stays an honest boundary (playurl needs login + DASH; not done). **Tests**: new `forward-media-test.mjs` **14/14**; regression card-pollution 18/18 · file-save 11/11 · inbound-media 26/26 · card-look 24/24 + live 28/28 · card-enrich 22/22.
-
-
-
+- **v0.1.0** — "First release as an independent plugin: standalone console · unified ports · Waylay takeover". The console is back as an **independent node process** (`127.0.0.1:8880`, no dsh dependency; 8880 retired), and the host-side `/qqai/console` is now a plain 302/JSON entry (token-bearing redirect, auto-launch when not running). Ports unified to 8880/3080/6700 (data plane)/13000/8977/8501; NapCat WebUI (6099) retired with the code. `lib/napcat-launch.js` (elevation shim / loader detection / WebUI token) is deleted while the OneBot data plane stays; `parseTasklist`/`QQ_CLIENT_RE` moved into `lib/waylay-launch.js`, and the "never kill by image name" rule is pinned in three places (guard rail + port-based PID lookup + source-level assertions). Tests: control-unit 138/0 · settings-unit 263/0 · console-debug-unit 78/0; also fixed the panel-script parsing gauge that could never pass with two `<script>` blocks.
 
 **Older versions (the v0.4 line and earlier) are in [CHANGELOG.md](CHANGELOG.md)** — the full history, including every release's defect list and test counts.

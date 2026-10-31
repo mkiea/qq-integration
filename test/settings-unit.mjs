@@ -11,6 +11,7 @@
 import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { createRequire } from 'node:module'
 import { createServer } from 'node:net'
+import { createServer as createHttpServer } from 'node:http'
 import { homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { pathToFileURL } from 'node:url'
@@ -18,10 +19,9 @@ import {
   PANEL_FLAT_ROWS, PANEL_GROUPS, PANEL_KEYS, PANEL_NEEDS, PANEL_ROW_BY_KEY, QUIET_MAX_RANGES, extensionStatusLines, normalizeNumberList, normalizeQuietRanges, normalizeRepoUrl, panelFooterLinks, panelFooterLinksWithConsole,
   panelSnapshot, readPatchValue, upsertPatchValue,
 } from '../lib/panel.js'
-import { detectNapcatBat, planNapcatAction } from '../lib/napcat-launch.js'
 import {
-  argvProfile, consoleLaunchPlan, consoleStartCommand, mountQqAiPanel, napcatWebUiUrl, panelLinkSources, probePort, profileDirOf,
-  redactSecrets, resolveProfile, sameSiteGuard, shimHeartbeatFresh, spawnBackgroundProcess, spawnDetachedProcess,
+  argvProfile, consoleLaunchPlan, consoleStartCommand, mountQqAiPanel, panelLinkSources, probePort, profileDirOf,
+  redactSecrets, resolveProfile, sameSiteGuard, spawnBackgroundProcess, spawnDetachedProcess,
 } from '../lib/settings-routes.js'
 import { Config, configDefaults, numberMetaOf } from '../lib/index.js'
 
@@ -142,16 +142,19 @@ check('凡 schema 里带 apiKey/baseUrl/provider/model 的开关都标了依赖'
  *   ② 本次 +2 行都是新类型（`outboundRedactMode` 下拉、`outboundRedactCanary` 文本），
  *      所以布尔/数值的数目不变，总数 85 → 87。
  *   ③ 顺手把 `select` / `text` 也纳入断言：以后再加控件类型，这里会提醒一起更新。
+ * 2026-10-31：+2 行 —— `funEnabled`（布尔，娱乐包总开关）+ `dataDir`（文本，数据根目录），
+ *   所以总数 87 → **89**、开关 69 → 70、文本 1 → 2。两条都是"新增一行没同步更新断言就会红"的
+ *   正常变化，不是弄丢了行。
  */
-check('依赖分布合理（开箱即用与需准备兼有；总数 87 = 69 开关 + 12 数值 + 1 时段 + 3 名单 + 1 下拉 + 1 文本）',
+check('依赖分布合理（开箱即用与需准备兼有；总数 89 = 70 开关 + 12 数值 + 1 时段 + 3 名单 + 1 下拉 + 2 文本）',
   allRows.filter((entry) => entry.needs === '').length >= 5
   && allRows.filter((entry) => entry.needs !== '').length >= 20
-  && allRows.length === 87
-  && boolRows.length === 69 && numRows.length === 12
+  && allRows.length === 89
+  && boolRows.length === 70 && numRows.length === 12
   && allRows.filter((entry) => entry.type === 'times').length === 1
   && allRows.filter((entry) => entry.type === 'list').length === 3
   && allRows.filter((entry) => entry.type === 'select').length === 1
-  && allRows.filter((entry) => entry.type === 'text').length === 1,
+  && allRows.filter((entry) => entry.type === 'text').length === 2,
   `开箱即用 ${allRows.filter((entry) => entry.needs === '').length} / 需准备 ${allRows.filter((entry) => entry.needs !== '').length} / 共 ${allRows.length}`)
 check('生图/语音这些"要装东西"的功能，说明里点明了需要什么',
   ['imageGenEnabled', 'ttsEnabled'].every((key) => {
@@ -388,7 +391,7 @@ check('★相关链接里没有"问题反馈"（保持：账号 / 更新日志 /
   links.map((link) => link.id).join(','))
 check('调试台链接里不含 token（本机密钥不进面板）',
   links.every((link) => !/token=/i.test(link.href)) && consoleLink.href.startsWith('http://127.0.0.1:'))
-const bareLinks = panelFooterLinks({ version: '1.0.0', repoUrl: '', consolePort: 8799 })
+const bareLinks = panelFooterLinks({ version: '1.0.0', repoUrl: '', consolePort: 8880 })
 check('没有仓库地址时只给账号入口、她的对话与调试台（不编造链接）',
   bareLinks.length === 3 && bareLinks.every((link) => ['account', 'chatlog', 'console'].includes(link.id)),
   bareLinks.map((link) => link.id).join(','))
@@ -402,8 +405,8 @@ check('没有仓库地址时只给账号入口、她的对话与调试台（不�
 //  "还是挪回到之前的位置吧，直接把相关链接整体拉到最上边" → "再把调试台和更新日志换一下位置" →
 //  "更新日志改到相关链接的最底下" → "嗯，还是把更新日志位置改回去吧" → "调试台改到调试文档下方"）。
 const accountLink = links.find((link) => link.id === 'account')
-check('账号入口在「相关链接」组里、排第一，且它自己不带 token',
-  accountLink?.href === '/qqai/account' && accountLink.label.includes('QQ助手账号')
+check('账号入口在「相关链接」组里、排第一，且它自己不带 token（Waylay 是裸 HTTP，不需要 token）',
+  accountLink?.href === 'http://127.0.0.1:13000/' && accountLink.label.includes('Waylay 控制台')
   && !/token=/i.test(accountLink.href) && links[0]?.id === 'account' && bareLinks[0]?.id === 'account',
   `${brief(accountLink)} · 完整=${links.map((link) => link.id).join(',')}`)
 check('顺序固定为 账号 → 更新日志 → 调试文档 → 她的对话 → 调试台（调试台压在最底下）',
@@ -412,7 +415,7 @@ check('顺序固定为 账号 → 更新日志 → 调试文档 → 她的对话
   `完整=${links.map((link) => link.id).join(',')} 无仓库=${bareLinks.map((link) => link.id).join(',')}`)
 // 调试台是**独立进程**：面板必须如实标出"运行中/未启动"，并给出可复制的启动命令（否则用户对着"连不上"发懵）。
 const offConsole = panelFooterLinksWithConsole({
-  version: '1.0.0', repoUrl: '', consolePort: 8799, consoleRunning: false, startCommand: 'node x.mjs',
+  version: '1.0.0', repoUrl: '', consolePort: 8880, consoleRunning: false, startCommand: 'node x.mjs',
 }).find((link) => link.id === 'console')
 check('调试台没启动时：链接改指宿主入口，并说明"点一下会自动拉起"（手动命令仍给出来）',
   offConsole.href === '/qqai/console' && offConsole.running === false
@@ -420,21 +423,21 @@ check('调试台没启动时：链接改指宿主入口，并说明"点一下会
   && offConsole.hint.includes('node x.mjs'),
   `${offConsole.state} ｜ ${offConsole.hint}`)
 const onConsole = panelFooterLinksWithConsole({
-  version: '1.0.0', repoUrl: '', consolePort: 8799, consoleRunning: true, startCommand: 'node x.mjs',
+  version: '1.0.0', repoUrl: '', consolePort: 8880, consoleRunning: true, startCommand: 'node x.mjs',
 }).find((link) => link.id === 'console')
 check('调试台在跑时：标"运行中"，且不再让用户去启动',
   onConsole.running === true && onConsole.state.includes('运行中') && !onConsole.state.includes('node x.mjs'),
   onConsole.state)
 // 配置读不到时必须降级而不是抛：插件根目录不存在、或 qq-control.json 是坏 JSON。
 const missingRoot = panelLinkSources({ root: '/definitely/not/here' })
-check('读不到 package.json / qq-control.json 时降级（版本空、端口回落 8799）',
-  missingRoot.version === '' && missingRoot.repoUrl === '' && missingRoot.consolePort === 8799,
+check('读不到 package.json / qq-control.json 时降级（版本空、端口回落 8880）',
+  missingRoot.version === '' && missingRoot.repoUrl === '' && missingRoot.consolePort === 8880,
   brief(missingRoot))
 const brokenRoot = mkdtempSync(join(tmpdir(), 'qq-broken-'))
 writeFileSync(join(brokenRoot, 'package.json'), '{ 这不是 JSON', 'utf8')
 writeFileSync(join(brokenRoot, 'qq-control.json'), '{ 也不是', 'utf8')
 const broken = panelLinkSources({ root: brokenRoot })
-check('坏 JSON 也不抛，按默认值走', broken.consolePort === 8799 && broken.version === '', brief(broken))
+check('坏 JSON 也不抛，按默认值走', broken.consolePort === 8880 && broken.version === '', brief(broken))
 rmSync(brokenRoot, { recursive: true, force: true })
 
 // ---------------------------------------------------------------- 2. 路由 ---- ----
@@ -471,7 +474,7 @@ const dispose = mountQqAiPanel(fakeHost, {
   // 数值控件的范围来自 schema（真实宿主由 lib/index.js 传进来）——测试也要接上，
   // 否则数值写入会因为"范围未知"被拒（这是刻意的 fail closed）。
   numberMeta: numberMetaOf(),
-  // 探测必须注入：否则断言会随"本机 8799 有没有在跑"而变（这坑真踩过一次）。
+  // 探测必须注入：否则断言会随"本机 8880 有没有在跑"而变（这坑真踩过一次）。
   probe: async () => false,
 })
 const makeResponse = () => {
@@ -488,13 +491,16 @@ const fakeRequest = (method, body, headers = {}) => ({
   async *[Symbol.asyncIterator]() { if (body !== undefined) yield Buffer.from(JSON.stringify(body)) },
 })
 
-check('挂载了十条路由（读面板 + 写开关 + 批量写 + 她的对话 + 对话数据 + 调试台 + 账号 + 二维码 + 启动 NapCat + 重启登录）',
-  registered.length === 10 && registered.some((r) => r.path === '/qqai/panel')
+// 2026-10-31：+1 条 `/qqai/data-dir/pick`（弹系统选文件夹窗口，选完写 dataDir）⇒ 10 → 11。
+check('挂载了十一条路由（读面板 + 写开关 + 批量写 + 她的对话 + 对话数据 + 调试台入口 + 账号 + 启动/停止 Waylay + Waylay 二维码 + 选数据根目录）',
+  registered.length === 11 && registered.some((r) => r.path === '/qqai/panel')
   && registered.some((r) => r.path === '/qqai/panel/set-batch')
   && registered.some((r) => r.path === '/qqai/panel/set') && registered.some((r) => r.path === '/qqai/console')
   && registered.some((r) => r.path === '/qqai/chatlog') && registered.some((r) => r.path === '/qqai/chatlog/data')
-  && registered.some((r) => r.path === '/qqai/account') && registered.some((r) => r.path === '/qqai/napcat/start')
-  && registered.some((r) => r.path === '/qqai/napcat/relogin') && registered.some((r) => r.path === '/qqai/napcat/qr'),
+  && registered.some((r) => r.path === '/qqai/account')
+  && registered.some((r) => r.path === '/qqai/waylay/start') && registered.some((r) => r.path === '/qqai/waylay/stop')
+  && registered.some((r) => r.path === '/qqai/waylay/qr')
+  && registered.some((r) => r.path === '/qqai/data-dir/pick'),
   registered.map((r) => r.path).join(','))
 
 const getHandler = registered.find((r) => r.path === '/qqai/panel').handler
@@ -519,7 +525,7 @@ check('GET 带上「相关链接」（账号入口 + 更新日志 + 调试台）
 // 载荷形状：账号入口**就在 links 里**（第一条），没有单独的 account 字段——
 // 客户端把整组渲染在标题正下方（用户 2026-10-04："直接把相关链接整体拉到最上边"）。
 check('GET 的 links 第一条就是账号入口（没有额外的 account 字段）',
-  readBody.links[0]?.id === 'account' && readBody.links[0]?.href === '/qqai/account'
+  readBody.links[0]?.id === 'account' && readBody.links[0]?.href === 'http://127.0.0.1:13000/'
   && readBody.account === undefined,
   brief({ account: readBody.account, links: readBody.links?.map((link) => link.id) }))
 /**
@@ -1149,7 +1155,7 @@ const warnBody = JSON.parse(warnRes.out.body)
 check('家目录 patch 也配了本插件时，面板给出"它盖过 profile 层"的警告',
   Array.isArray(warnBody.warnings) && warnBody.warnings.length === 1
   && warnBody.warnings[0].includes('盖过'), brief(warnBody.warnings))
-check('GET 里如实标出调试台状态（本条注入"没在跑"，与实际机器无关）',
+check('GET 里如实标出调试台状态（v0.8.0 独立进程：probe=false ⇒ 如实说未启动 + 给自动拉起承诺）',
   readBody.links.find((link) => link.id === 'console')?.running === false
   && readBody.links.find((link) => link.id === 'console')?.state.includes('未启动'),
   brief(readBody.links.find((link) => link.id === 'console')?.state))
@@ -1159,7 +1165,7 @@ const fakeRoot = join(dir, 'plugin-root')
 mkdirSync(fakeRoot, { recursive: true })
 const FAKE_TOKEN = 'tok-not-a-real-secret-1234'
 writeFileSync(join(fakeRoot, 'package.json'), JSON.stringify({ version: '1.2.3', repository: { url: 'git+https://github.com/me/r.git' } }), 'utf8')
-writeFileSync(join(fakeRoot, 'qq-control.json'), JSON.stringify({ ports: { control: 8799 }, token: FAKE_TOKEN }), 'utf8')
+writeFileSync(join(fakeRoot, 'qq-control.json'), JSON.stringify({ ports: { control: 8880 }, token: FAKE_TOKEN }), 'utf8')
 
 /**
  * v0.6.4：调试台支持**一键拉起** —— 没在跑时入口自己起一个（普通 node 进程，不需要提权）。
@@ -1190,6 +1196,8 @@ const mountConsole = (running, { flipAfter = 0, withEntry = true } = {}) => {
     profile: 'web', config: {},
     // 临时 root 里没有 control/ui.html —— 页面那条分支要读它，换成最小可改写页面。
     readFile: (file, encoding) => (String(file).endsWith('ui.html') ? FAKE_CONSOLE_UI : readFileSync(file, encoding)),
+    // ★ 进程内直挂后，页面走 currentMountUi()（stat + readFile）：真文件不存在，两个都要注入。
+    stat: (file) => ({ mtimeMs: String(file).endsWith('ui.html') ? 42 : 0 }),
     writeFile: writeFileSync, env,
     linkSources: { root: fakeRoot },
     probe: async () => { probes += 1; return flipAfter > 0 && probes > flipAfter ? true : running },
@@ -1222,34 +1230,33 @@ const mountConsole = (running, { flipAfter = 0, withEntry = true } = {}) => {
     consoleLaunchPlan({ root: fakeRoot, execPath: 'C:\\node\\node.exe', exists: () => true, electron: false }).env === null)
 }
 
-// ② 没在跑 + 拉得起来 ⇒ 直接 302 进去（这就是"一键拉起"）
+// ② 进程内直挂：不管"跑没跑"，点「调试台」都直接在当前地址拿到改写后的页面
 {
   const startable = mountConsole(false, { flipAfter: 1 })
   const autoRes = makeResponse()
   await startable.routes.find((r) => r.path === '/qqai/console')
     .handler(fakeRequest('GET', undefined, { 'sec-fetch-site': 'same-origin', 'sec-fetch-mode': 'navigate' }), autoRes)
-  check('★点「调试台」时它没在跑 → 自动拉起，并**直接把页面发出来**（同端口，不再 302 跳去 8799）',
-    autoRes.out.status === 200
-    && autoRes.out.body.includes("const CONSOLE_BASE = '/qqai/console'")
-    && autoRes.out.body.includes('path = CONSOLE_BASE + path;')
-    && autoRes.out.body.includes('new EventSource(CONSOLE_BASE +')
-    && startable.spawns.length === 1
-    && String(startable.spawns[0].args[0]).endsWith('qq-control.mjs') && startable.spawns[0].cwd === fakeRoot,
-    `status=${autoRes.out.status} spawns=${startable.spawns.length}`)
+  check('★点「调试台」（没在跑）→ 自动拉起独立进程并 302 过去（带 token，token 只出现在这一次响应里）',
+    autoRes.out.status === 302
+    && String(autoRes.out.headers.location).startsWith('http://127.0.0.1:8880/?token=')
+    && String(autoRes.out.headers.location).includes(FAKE_TOKEN)
+    && startable.spawns.length === 1,
+    `status=${autoRes.out.status} spawns=${startable.spawns.length} loc=${String(autoRes.out.headers.location).replace(FAKE_TOKEN, '<token>')}`)
   /**
    * `spawnBackgroundProcess` 只**追加**注入的 env（不能覆盖宿主环境，否则 PATH/代理/DSH_* 全丢）。
+   * ★ 它现在只为独立兜底版（`bin/qq-control.mjs`）服务，面板里的直挂不再用到它——但行为不能退化。
    */
   {
     const seen = []
     const spawned = spawnBackgroundProcess({
-      command: 'D:\\app\\DeepSeek Harness.exe', args: ['x.mjs'], cwd: fakeRoot,
+      command: 'D:////app////DeepSeek Harness.exe', args: ['x.mjs'], cwd: fakeRoot,
       env: { ELECTRON_RUN_AS_NODE: '1' },
       spawnImpl: (command, args, options) => { seen.push(options); return { pid: 1, unref() {} } },
     })
     // 注意：宿主环境**本身可能就带着** ELECTRON_RUN_AS_NODE（DSH 给工具子进程设过），
     // 所以判据是"宿主原有的键一个不少 + 我们的键被设上"，不是"键数 +1"。
     const missing = Object.keys(process.env).filter((key) => !(key in (seen[0].env ?? {})))
-    check('★后台拉起把 env 合并进宿主环境（宿主变量一个不少，只追加）',
+    check('★后台拉起把 env 合并进宿主环境（宿主变量一个不少，只追加；独立兜底版仍用得上）',
       spawned.pid === 1 && seen[0].env?.ELECTRON_RUN_AS_NODE === '1' && missing.length === 0
       && seen[0].windowsHide === true && seen[0].detached === undefined,
       brief({ missing, merged: Object.keys(seen[0].env ?? {}).length }))
@@ -1259,60 +1266,38 @@ const mountConsole = (running, { flipAfter = 0, withEntry = true } = {}) => {
   }
 }
 
-// ③ 拉起后端口一直不通 ⇒ 如实说明（页面与 JSON 都带原因）
-{
-  const stuck = mountConsole(false, { flipAfter: 0 })
-  const stuckRes = makeResponse()
-  await stuck.routes.find((r) => r.path === '/qqai/console').handler(fakeRequest('GET'), stuckRes)
-  check('★拉起后端口一直不通 → 页面如实说明"已经拉起进程但端口没通"，并给出手动命令',
-    stuckRes.out.status === 200 && stuckRes.out.body.includes('没能自动起来')
-    && stuckRes.out.body.includes('127.0.0.1:8799') && stuckRes.out.body.includes('qq-control.mjs'),
-    String(stuckRes.out.status))
-  const stuckJson = makeResponse()
-  await stuck.routes.find((r) => r.path === '/qqai/console').handler(
-    { method: 'GET', url: '/qqai/console?format=json', headers: {}, socket: null, async *[Symbol.asyncIterator]() {} },
-    stuckJson)
-  const stuckBody = JSON.parse(stuckJson.out.body)
-  check('★`?format=json` 带出"拉起了但没通"的原因（桌面端据此提示）',
-    stuckJson.out.status === 200 && stuckBody.ok === false && stuckBody.running === false
-    && stuckBody.started === true && stuckBody.pid === 4321 && String(stuckBody.reason).includes('还没通'),
-    brief(stuckBody))
-}
+// ③ v0.8.0：控制台回到独立进程，/qqai/console 不再反代 /api/* 子路径——
+//    API 由 8880 自己服务（control-unit 覆盖），这里不再有「占位 token」这回事。
 
-// ④ 入口文件缺失 ⇒ 不硬拉，如实拒绝
+
+// ④ 入口脚本缺失不再重要：直挂不依赖任何入口；ui.html 读不到时也不能白屏
 {
   const noEntry = mountConsole(false, { withEntry: false })
   const noEntryRes = makeResponse()
   await noEntry.routes.find((r) => r.path === '/qqai/console').handler(fakeRequest('GET'), noEntryRes)
-check('★控制台入口文件不存在时不硬拉，页面上写明原因',
-  noEntry.spawns.length === 0 && noEntryRes.out.body.includes('找不到控制台入口'),
-  String(noEntryRes.out.status))
-/**
- * 反向对照：**没拉起过**（连入口都找不到）就绝不能自动重试 ——
- * 否则那种情况每 2 秒刷新一次、永远好不了，用户只会看到页面在闪。
- */
-check('★没拉起过（入口都找不到）时不给重试脚本（只给"刚拉起、端口还没通"那种情况）',
-  !noEntryRes.out.body.includes('retry=1'),
-  `spawns=${noEntry.spawns.length} 含 retry=${noEntryRes.out.body.includes('retry=1')}`)}
+  check('★控制台入口文件不存在时：说明页如实给原因（不假装能起，也不抛异常）',
+    noEntryRes.out.status === 200 && noEntryRes.out.body.includes('没能自动起来')
+    && noEntryRes.out.body.includes('找不到控制台入口') && noEntry.spawns.length === 0,
+    String(noEntryRes.out.status))
+  check('★"端口不通自动重试"那套脚本已随独立进程一起退场',
+    !noEntryRes.out.body.includes('retry=1') && !noEntryRes.out.body.includes('location.replace'),
+    `含 retry=${noEntryRes.out.body.includes('retry=1')}`)
+}
 
-const notRunningRoutes = mountConsole(false).routes
-const consoleEntryOff = notRunningRoutes.find((r) => r.path === '/qqai/console')
+const consoleEntryOff = mountConsole(false).routes.find((r) => r.path === '/qqai/console')
 const offRes = makeResponse()
 await consoleEntryOff.handler(fakeRequest('GET'), offRes)
-check('调试台没跑时：入口不再是死链（回一页说明 + 手动命令）',
-  offRes.out.status === 200 && offRes.out.body.includes('没能自动起来')
-  && offRes.out.body.includes('qq-control.mjs') && offRes.out.headers['content-type'].includes('text/html'),
+check('调试台没跑时：给 200 说明页（人话 + 可复制的启动命令），而不是静默降级',
+  offRes.out.status === 200 && offRes.out.headers['content-type'].includes('text/html')
+  && offRes.out.body.includes('没能自动起来') && offRes.out.body.includes('qq-control.mjs'),
   String(offRes.out.status))
-check('★拉起了但没确认到端口 → 说明页会自己再试一次（带 retry 标记，不会无限循环）',
-  offRes.out.body.includes("location.replace(location.pathname + '?retry=1')")
-  && offRes.out.body.includes("has('retry')"),
-  offRes.out.body.includes('retry=1') ? '含一次性重试脚本' : '没有重试脚本')
 
 // ★真机踩到的坑：端口通了但 token 还没落盘 ⇒ 绝不能拿一条"没有 token 的地址"把用户送进去
 //   （那版页面满屏"token 无效"、点哪都没反应，看起来就像"只是个页面"）。
+//   ★ 这条路只服务 `?format=json`（桌面端要一条"带 token 的绝对地址"），直挂页面不走它。
 {
   const noTokenRoot = mkdtempSync(join(tmpdir(), 'qq-console-notoken-'))
-  writeFileSync(join(noTokenRoot, 'qq-control.json'), JSON.stringify({ ports: { control: 8799 } }), 'utf8')
+  writeFileSync(join(noTokenRoot, 'qq-control.json'), JSON.stringify({ ports: { control: 8880 } }), 'utf8')
   const seen = []
   const hostStub = { webServer: { register(route) { seen.push(route); return () => {} } } }
   mountQqAiPanel(hostStub, {
@@ -1361,11 +1346,10 @@ const runningRoutes = mountConsole(true).routes
 const consoleEntryOn = runningRoutes.find((r) => r.path === '/qqai/console')
 const onRes = makeResponse()
 await consoleEntryOn.handler(fakeRequest('GET'), onRes)
-check('调试台在跑时：直接在同端口给页面（不再跳去 8799），且页面里**拿不到** token',
-  onRes.out.status === 200 && onRes.out.body.includes("const CONSOLE_BASE = '/qqai/console'")
-  && onRes.out.body.includes("const token = 'via-proxy';")
-  && !onRes.out.body.includes(FAKE_TOKEN),
-  `status=${onRes.out.status} 页面含真 token=${onRes.out.body.includes(FAKE_TOKEN)}`)
+check('调试台在跑时：302 到 127.0.0.1:8880 并带上 qq-control.json 里的 token（只出现在这一跳里）',
+  onRes.out.status === 302 && String(onRes.out.headers.location).startsWith('http://127.0.0.1:8880/?token=')
+  && String(onRes.out.headers.location).includes(FAKE_TOKEN),
+  `status=${onRes.out.status} loc=${String(onRes.out.headers.location).replace(FAKE_TOKEN, '<token>')}`)
 const panelRes = makeResponse()
 await runningRoutes.find((r) => r.path === '/qqai/panel').handler(fakeRequest('GET'), panelRes)
 check('面板载荷里**没有** token（密钥由反向代理在服务端注入，浏览器里根本没有）',
@@ -1379,43 +1363,14 @@ const probePortNumber = probeServer.address().port
 const reachable = await probePort(probePortNumber)
 await new Promise((resolve) => probeServer.close(resolve))
 const unreachable = await probePort(probePortNumber)
-check('端口探测能分辨"有人听/没人听"（自己的临时端口，不碰 8799）',
+check('端口探测能分辨"有人听/没人听"（自己的临时端口，不碰 8880）',
   reachable === true && unreachable === false, `listen=${reachable} closed=${unreachable}`)
 check('启动命令指向控制台入口脚本',
   consoleStartCommand({ root: fakeRoot }).includes(join('control', 'bin', 'qq-control.mjs')),
   consoleStartCommand({ root: fakeRoot }))
 
-// ---- 「QQ助手账号」入口（NapCat WebUI 的免密钥跳转）----
-// 落点与参数写法照 NapCat 4.18.28 前端实测：`/webui/?token=<明文 token>`（前端自己算 hash 再登录）。
-const napcatRoot = join(dir, 'napcat-root')
-mkdirSync(join(napcatRoot, 'bootmain', 'config'), { recursive: true })
-const NAPCAT_TOKEN = 'nap-token-not-a-real-secret-9876'
-writeFileSync(join(napcatRoot, 'qq-control.json'), JSON.stringify({
-  ports: { control: 8799, napcat: 6099 },
-  napcatBat: join(napcatRoot, 'bootmain', 'napcat.bat'),
-}), 'utf8')
-writeFileSync(join(napcatRoot, 'bootmain', 'config', 'webui.json'), JSON.stringify({ token: NAPCAT_TOKEN }), 'utf8')
-writeFileSync(join(napcatRoot, 'bootmain', 'config', 'webui-notoken.json'), JSON.stringify({ token: '' }), 'utf8')
-const accountUrl = napcatWebUiUrl({ pluginRoot: napcatRoot })
-check('账号入口的落点是 NapCat 的 /webui/?token=（实测过的形状：带尾斜杠、明文 token）',
-  accountUrl === `http://127.0.0.1:6099/webui/?token=${NAPCAT_TOKEN}`, accountUrl.replace(NAPCAT_TOKEN, '<token>'))
-const badControlRoot = join(dir, 'napcat-bad')
-mkdirSync(badControlRoot, { recursive: true })
-writeFileSync(join(badControlRoot, 'qq-control.json'), '{ 这不是 JSON', 'utf8')
-check('读不到控制台配置时：账号入口退回裸 /webui/（不抛、也不编 token）',
-  napcatWebUiUrl({ pluginRoot: badControlRoot }) === 'http://127.0.0.1:6099/webui/'
-  && napcatWebUiUrl({ pluginRoot: join(dir, 'definitely-missing') }) === 'http://127.0.0.1:6099/webui/',
-  napcatWebUiUrl({ pluginRoot: badControlRoot }))
-const noTokenRoot = join(dir, 'napcat-notoken')
-mkdirSync(join(noTokenRoot, 'bootmain', 'config'), { recursive: true })
-writeFileSync(join(noTokenRoot, 'qq-control.json'), JSON.stringify({
-  ports: { napcat: 6201 }, napcatBat: join(noTokenRoot, 'bootmain', 'napcat.bat'),
-}), 'utf8')
-writeFileSync(join(noTokenRoot, 'bootmain', 'config', 'webui.json'), JSON.stringify({ token: '' }), 'utf8')
-check('webui.json 里没有 token 时：只给裸地址，端口仍按 qq-control.json 走',
-  napcatWebUiUrl({ pluginRoot: noTokenRoot }) === 'http://127.0.0.1:6201/webui/',
-  napcatWebUiUrl({ pluginRoot: noTokenRoot }))
-
+// ---- 「QQ助手账号」入口（v0.8.0：302 到 Waylay 的 13000 控制台；NapCat WebUI 已随代码退场）----
+// Waylay 是裸 HTTP、没有 token 可拼——这个入口不再「交出密钥」，同源守卫照留（它是面板的动作入口）。
 const accountRoutes = []
 mountQqAiPanel({
   webServer: {
@@ -1423,18 +1378,19 @@ mountQqAiPanel({
   },
 }, {
   profile: 'web', config: {}, readFile: readFileSync, writeFile: writeFileSync, env,
-  linkSources: { root: napcatRoot }, probe: async () => false,
+  linkSources: { root: fakeRoot }, probe: async () => false,
 })
 const accountEntryRoute = accountRoutes.find((r) => r.path === '/qqai/account')
+const ACCOUNT_URL = 'http://127.0.0.1:13000/'
 const accountRes = makeResponse()
 await accountEntryRoute.handler(fakeRequest('GET'), accountRes)
-check('GET /qqai/account → 302 到带 token 的 NapCat 页面（免手抄密钥）',
-  accountRes.out.status === 302 && accountRes.out.headers.location === accountUrl
+check('GET /qqai/account → 302 到 Waylay 的 13000 控制台（裸 HTTP，不需要 token）',
+  accountRes.out.status === 302 && accountRes.out.headers.location === ACCOUNT_URL
   && accountRes.out.headers['cache-control'] === 'no-store',
-  String(accountRes.out.headers.location).replace(NAPCAT_TOKEN, '<token>'))
+  String(accountRes.out.headers.location))
 const accountCross = makeResponse()
 await accountEntryRoute.handler(fakeRequest('GET', undefined, { origin: 'https://evil.example' }), accountCross)
-check('账号入口拒绝跨站（它会把带 token 的地址交出去）',
+check('账号入口拒绝跨站（它是面板的动作入口，没理由给第三方页面用）',
   accountCross.out.status === 403, String(accountCross.out.status))
 /**
  * ✋ 2026-10-04 真机事故回归：**浏览器点链接的请求头形状**。
@@ -1454,7 +1410,7 @@ const navHeaders = (site) => ({
 const accountNav = makeResponse()
 await accountEntryRoute.handler(fakeRequest('GET', undefined, navHeaders('same-origin')), accountNav)
 check('★浏览器点链接（导航：same-origin、无 Origin）必须 302 —— 这次"点了没反应"的根因',
-  accountNav.out.status === 302 && accountNav.out.headers.location === accountUrl,
+  accountNav.out.status === 302 && accountNav.out.headers.location === ACCOUNT_URL,
   `${accountNav.out.status} ${String(accountNav.out.headers.location ?? accountNav.out.body).slice(0, 80)}`)
 /**
  * ★ 桌面端（渲染基址 `dsh-app://app/`）点不动账号入口：桌面主窗口只放行 http(s) 外链到系统浏览器，
@@ -1464,13 +1420,13 @@ check('★浏览器点链接（导航：same-origin、无 Origin）必须 302 �
 const accountJson = makeResponse()
 await accountEntryRoute.handler({ method: 'GET', url: '/qqai/account?format=json', headers: {}, socket: null, async *[Symbol.asyncIterator]() {} }, accountJson)
 check('★`?format=json` 回的是绝对地址（桌面端拿它自己开），不是 302',
-  accountJson.out.status === 200 && JSON.parse(accountJson.out.body).url === accountUrl,
-  String(accountJson.out.body).replace(NAPCAT_TOKEN, '<token>'))
+  accountJson.out.status === 200 && JSON.parse(accountJson.out.body).url === ACCOUNT_URL,
+  String(accountJson.out.body))
 const accountJsonCross = makeResponse()
 await accountEntryRoute.handler(
   { method: 'GET', url: '/qqai/account?format=json', headers: { origin: 'https://evil.example' }, socket: null, async *[Symbol.asyncIterator]() {} },
   accountJsonCross)
-check('`?format=json` 同样受守卫保护（跨站拿不到带 token 的地址）', accountJsonCross.out.status === 403, String(accountJsonCross.out.status))
+check('`?format=json` 同样受守卫保护（跨站拿不到入口地址）', accountJsonCross.out.status === 403, String(accountJsonCross.out.status))
 // 上面那条测试用的是**真实浏览器发不出来的**组合（Origin=evil + same-origin 标记）。
 // 这里显式记录服务端的语义：`sec-fetch-site: same-origin` 单独就够（浏览器按发起方 URL 算的，
 // 页面改不了；代理场景下 Origin 与 Host 本来就可能不等）。改动这条守卫前先看 lib 里的注释。
@@ -1491,422 +1447,198 @@ check('同站不同端口（sec-fetch-site: same-site）仍然拒 —— 本机�
 const accountCrossNav = makeResponse()
 await accountEntryRoute.handler(fakeRequest('GET', undefined, navHeaders('cross-site')), accountCrossNav)
 check('跨站导航（别的网站上的 <a href> 指过来）仍然 403', accountCrossNav.out.status === 403, String(accountCrossNav.out.status))
-// 面板载荷里绝不能出现 NapCat 的 token（同"调试台 token 不进载荷"的规矩）。
-const accountPanel = makeResponse()
-await accountRoutes.find((r) => r.path === '/qqai/panel').handler(fakeRequest('GET'), accountPanel)
-check('面板载荷里**没有** NapCat token（密钥只走 302）',
-  !accountPanel.out.body.includes(NAPCAT_TOKEN))
+// v0.8.0：账号入口不再经手任何 token（Waylay 裸 HTTP），载荷泄密判据由 FAKE_TOKEN 那组断言覆盖。
 
-/**
- * ---- 快捷操作：启动 NapCat / 重新登录（用户："不能自己快捷启动吗？比如加到哪个控制选项中"）----
- * 决策逻辑是纯函数（`planNapcatAction`），执行走注入的 spawnDetached —— 测试**绝不真的拉进程**。
- */
-/**
- * 一条快捷操作的"有效命令文本" = 提权命令 + 它要执行的垫片脚本内容。
- * 2026-10-04 起真正的脏活（cd /d、call launcher.bat、taskkill、日志重定向）都在垫片里，
- * 提权命令只指向垫片路径——所以断言要看这两者合起来，别只看 args。
- */
-const planText = (plan) => `${(plan.args ?? []).join(' ')}\n${plan.shim?.content ?? ''}`
-
-const planStart = planNapcatAction('start', {
-  bat: 'C:\\NapCat\\bootmain\\launcher.bat', running: false, loaders: [], exists: () => true,
-  logFile: 'C:\\QQAI\\qq-napcat-launch.log', shimFile: 'C:\\QQAI\\qq-napcat-launch.cmd',
-})
-check('快捷启动：没在跑时给出提权启动命令（两条分支都套 RunAs —— 才能脱离宿主进程树）',
-  planStart.ok === true && planText(planStart).includes("Verb = 'RunAs'")
-  && planText(planStart).includes('launcher.bat'),
-  planText(planStart).slice(-140))
-check('快捷启动：已经在跑时不去重复拉一个，并指路「重新登录」',
-  planNapcatAction('start', { bat: 'C:\\x\\launcher.bat', running: true, exists: () => true }).ok === false
-  && planNapcatAction('start', { bat: 'C:\\x\\launcher.bat', running: true, exists: () => true }).focus === 'relogin')
-const planSwitched = planNapcatAction('start', {
-  bat: 'C:\\NapCat\\bootmain\\napcat.bat', running: false, exists: (file) => /launcher\.bat$/i.test(file),
-  shimFile: 'C:\\QQAI\\qq-napcat-launch.cmd', logFile: 'C:\\QQAI\\qq-napcat-launch.log',
-})
-check('快捷启动：配置里写的是 napcat.bat 时自动改用同目录 launcher.bat（并说明原因）',
-  planSwitched.ok === true && planText(planSwitched).includes('launcher.bat')
-  && planSwitched.note.includes('launcher.bat'),
-  planSwitched.note)
-const planRelogin = planNapcatAction('relogin', {
-  bat: 'C:\\NapCat\\bootmain\\launcher.bat',
-  loaders: [{ pid: 4100, name: 'NapCatWinBootMain.exe' }, { pid: 4200, name: 'QQ.exe' }],
-  exists: () => true,
-  logFile: 'C:\\QQAI\\qq-napcat-launch.log', shimFile: 'C:\\QQAI\\qq-napcat-launch.cmd',
-})
-check('重新登录：只按加载器 PID 杀（QQ.exe 那个 PID 不在命令里）',
-  planRelogin.ok === true && planText(planRelogin).includes('taskkill /PID 4100 /T /F')
-  && !planText(planRelogin).includes('4200'),
-  planText(planRelogin).slice(-160))
-check('重新登录：拿不到加载器 PID 就拒绝（绝不退回按名杀 QQ）',
-  planNapcatAction('relogin', { bat: 'C:\\x\\launcher.bat', loaders: [], exists: () => true }).ok === false
-  && planNapcatAction('relogin', { bat: 'C:\\x\\launcher.bat', loaders: [], exists: () => true }).reason.includes('QQ'),
-  planNapcatAction('relogin', { bat: 'C:\\x\\launcher.bat', loaders: [], exists: () => true }).reason.slice(0, 60))
-check('快捷操作：没配启动脚本时明确拒绝', planNapcatAction('start', { bat: '', exists: () => true }).ok === false
-  && planNapcatAction('start', { bat: '', exists: () => true }).reason.includes('napcatBat'))
-check('载荷里带上 NapCat 的运行状态（按钮据此禁用）',
-  typeof JSON.parse(accountPanel.out.body).napcat?.running === 'boolean'
-  && JSON.parse(accountPanel.out.body).napcat?.port > 0,
-  brief(JSON.parse(accountPanel.out.body).napcat))
-/**
- * ★ 用户连着两次问"没弹出二维码啊"：看到的是**空窗口**（我们把启动输出重定向进日志了）。
- * 解决＝面板直接贴图：载荷给 `napcat.qr`，`GET /qqai/napcat/qr` 把 `cache/qrcode.png` 交出去。
- */
+// ---- Waylay 快捷操作与二维码（v0.8.0：/qqai/waylay/{start,stop,qr}，NapCat 那三条已退场）----
+// 「停止」沿用旧后端立的铁律：**绝不按镜像名杀 QQ** —— 只认「监听 waylay 端口的那个 PID」，
+// 再核对进程名必须 QQ 系、且不是控制台自己；三层任一不满足就拒绝。
 {
-  const qrRoutes = []
-  const freshQr = () => Date.now() - 30_000
-  const staleQr = () => Date.now() - 400_000
-  const mountQr = (mtimeMs) => {
-    qrRoutes.length = 0
+  // mock 状态接口：waylayStatus 在「端口在听」时会真发 HTTP——测试结果不能随真机 13000 而变。
+  const mockServer = createHttpServer((request, response) => {
+    response.writeHead(200, { 'content-type': 'application/json' })
+    response.end(JSON.stringify({ logged_in: true, uptime_sec: 60, uin: 1000000001, nickname: '凛' }))
+  })
+  await new Promise((resolve) => mockServer.listen(0, '127.0.0.1', resolve))
+  const mockPort = mockServer.address().port
+  const waylayRoot = join(dir, 'waylay-root')
+  mkdirSync(waylayRoot, { recursive: true })
+  writeFileSync(join(waylayRoot, 'rin-waylay.bat'), 'rem stub', 'utf8')
+  writeFileSync(join(waylayRoot, 'qq-control.json'), JSON.stringify({ ports: { control: 8880, waylay: mockPort }, waylayBat: join(waylayRoot, 'rin-waylay.bat') }), 'utf8')
+
+  const mountWaylay = (extra = {}) => {
+    const routes = []
     mountQqAiPanel({
-      webServer: { register(route) { qrRoutes.push(route); return () => { const at = qrRoutes.indexOf(route); if (at >= 0) qrRoutes.splice(at, 1) } } },
+      webServer: { register(route) { routes.push(route); return () => { const at = routes.indexOf(route); if (at >= 0) routes.splice(at, 1) } } },
     }, {
       profile: 'web', config: {}, readFile: readFileSync, writeFile: writeFileSync, env,
-      linkSources: { root: napcatRoot }, probe: async () => true, exists: () => true, napcatWaitMs: 0,
-      stat: () => ({ mtimeMs: mtimeMs() }),
-      readBinary: (file) => Buffer.from(`PNG:${file}`, 'utf8'),
-      spawnDetached: async () => ({ pid: 1, failed: false, code: 0, stdout: '', stderr: '' }),
-      exec: (command, args, options, callback) => (typeof options === 'function' ? options : callback)(null, '', ''),
+      linkSources: { root: waylayRoot }, waylayWaitMs: 0, ...extra,
     })
-    return qrRoutes.find((r) => r.path === '/qqai/napcat/qr')
+    return routes
   }
 
-  const fresh = mountQr(freshQr)
-  const qrRes = makeResponse()
-  await fresh.handler(fakeRequest('GET', undefined, { 'sec-fetch-site': 'same-origin', 'sec-fetch-mode': 'no-cors' }), qrRes)
-  check('★二维码新鲜时：GET /qqai/napcat/qr 直接回 PNG（面板据此内嵌图片）',
-    qrRes.out.status === 200 && String(qrRes.out.headers['content-type']).includes('image/png')
-    && Buffer.isBuffer(qrRes.out.body) && qrRes.out.body.toString('utf8').startsWith('PNG:'),
-    `${qrRes.out.status} ${qrRes.out.headers['content-type']} ${String(qrRes.out.body).slice(0, 40)}`)
-  const qrPanel = makeResponse()
-  await qrRoutes.find((r) => r.path === '/qqai/panel').handler(fakeRequest('GET'), qrPanel)
-  const qrPayload = JSON.parse(qrPanel.out.body).napcat.qr
-  check('★载荷里的 napcat.qr 指路 /qqai/napcat/qr（新鲜时给 url，附年龄）',
-    qrPayload.fresh === true && qrPayload.url === '/qqai/napcat/qr' && qrPayload.ageSeconds >= 0,
-    brief(qrPayload))
-
-  const stale = mountQr(staleQr)
-  const staleRes = makeResponse()
-  await stale.handler(fakeRequest('GET'), staleRes)
-  const staleBody = JSON.parse(staleRes.out.body)
-  check('★二维码过期（>5 分钟）时：404 + 人话（让人去点「重新登录」刷新）',
-    staleRes.out.status === 404 && staleBody.ok === false && staleBody.reason.includes('过期'),
-    brief(staleBody.reason))
-  const stalePanel = makeResponse()
-  await qrRoutes.find((r) => r.path === '/qqai/panel').handler(fakeRequest('GET'), stalePanel)
-  check('过期时载荷不给 url（客户端就不会显示一张废图）',
-    JSON.parse(stalePanel.out.body).napcat.qr.fresh === false
-    && JSON.parse(stalePanel.out.body).napcat.qr.url === '',
-    brief(JSON.parse(stalePanel.out.body).napcat.qr))
-  const postQr = makeResponse()
-  await stale.handler(fakeRequest('POST', {}, JSON_HEADERS), postQr)
-  check('二维码路由拒绝 POST', postQr.out.status === 405, String(postQr.out.status))
-  const crossQr = makeResponse()
-  await stale.handler(fakeRequest('GET', undefined, { origin: 'https://evil.example' }), crossQr)
-  check('二维码路由拒绝跨站（本机文件不外流）', crossQr.out.status === 403, String(crossQr.out.status))
-}
-// 提权命令必须**先判断自己是不是管理员**：宿主已经是管理员时 RunAs 不会弹 UAC（真机实测），
-// 非管理员时这台机器上 RunAs 会被静默拒绝 —— 两条分支都要写清楚，且各打一个标记给调用方。
-check('提权命令里有"是否管理员"判断 + 两条分支标记（QAI-ELEVATED / QAI-RUNAS）',
-  planStart.args.join(' ').includes('IsInRole') && planStart.args.join(' ').includes('QAI-ELEVATED')
-  && planStart.args.join(' ').includes('QAI-RUNAS') && planStart.args.join(' ').includes("'RunAs'"),
-  planStart.args.join(' ').slice(-150))
-check('★提权命令只把**垫片路径**交给 cmd（不允许再塞复杂内层命令 —— 真机上引号会被打乱、压根不执行）',
-  planStart.args.join(' ').includes(`@('/c','C:\\QQAI\\qq-napcat-launch.cmd')`)
-  && !/&&|>>|taskkill|call "/.test(planStart.args.join(' ')),
-  planStart.args.join(' ').slice(-170))
-/**
- * ★ 管理员宿主改走 WMI（真机：`-Verb RunAs` 在已是管理员的宿主里偶尔静默什么都不做），
- *   而且 `if {}` 与 `else {}` 之间**不能有分号**（PowerShell 语法；真机报过
- *   `else : 无法将"else"项识别为 cmdlet`）；脚本里也不放字面量双引号（用 `[char]34` 拼）。
- */
-check('★管理员分支走 WMI Win32_Process.Create，且 if/else 之间没有分号',
-  planStart.args.join(' ').includes('Invoke-CimMethod -ClassName Win32_Process')
-  && planStart.args.join(' ').includes('[char]34')
-  && !/\} *; *else/.test(planStart.args.join(' '))
-  && planStart.args.join(' ').includes("Verb = 'RunAs'"),
-  planStart.args.join(' ').slice(-200))
-
-/**
- * ★ 2026-10-04 真机总根源的回归：**`detached: true` 会让子进程压根不执行命令**
- * （Node 26 + Windows 实测：同一命令 detached 时 exit=0、输出全空、落盘标记都没生成；
- * 去掉它立刻正常）。这里用假 spawnImpl 钉住"绝不能传 detached"。
- */
-{
-  const seen = []
-  const fakeSpawn = (command, args, options) => {
-    seen.push({ command, args, options })
-    const listeners = {}
-    const child = {
-      pid: 4321,
-      stdout: { on: () => {} },
-      stderr: { on: () => {} },
-      on: () => {},
-      once(event, handler) { listeners[event] = handler; return child },
-      unref: () => {},
-    }
-    setTimeout(() => listeners.exit?.(0), 0)
-    return child
-  }
-  const result = await spawnDetachedProcess({ command: 'powershell.exe', args: ['-NoProfile'], spawnImpl: fakeSpawn, waitMs: 50 })
-  check('★spawnDetachedProcess 不传 detached（传了的话命令根本不会执行 —— 真机总根源）',
-    seen.length === 1 && seen[0].options.detached === undefined && seen[0].options.windowsHide === true
-    && Array.isArray(seen[0].options.stdio) && seen[0].options.stdio[1] === 'pipe' && result.pid === 4321,
-    JSON.stringify({ options: seen[0]?.options, pid: result.pid }))
-  const failed = await spawnDetachedProcess({ command: 'x', spawnImpl: () => { throw new Error('ENOENT 找不到 powershell.exe') }, waitMs: 50 })
-  check('spawnDetachedProcess 把 spawn 抛出的错误如实带回（不静默）',
-    failed.failed === true && String(failed.message).includes('ENOENT'), brief(failed))
-}
-
-// ---- 快捷操作路由：真的会拉起进程，所以 spawn / exec 全部注入（测试绝不动真机）----
-{
-  const spawned = []
-  const shims = []
-  const actionRoutes = []
-  /**
-   * 启动日志的 mtime 桩：**点击之前是 5 秒前的旧文件**，`spawnDetached` 之后才前进
-   *（真机上就是垫片跑起来写了那行心跳）。这样才测得出"只认这次新写进去的心跳"——
-   * 拿一个恒定不变的 mtime 当桩，会把 `since` 判据整个测没。
-   */
-  let napcatLogMtime = Date.now() - 5000
-  const shimRanNow = () => { napcatLogMtime = Math.max(Date.now(), napcatLogMtime + 1) }
-  mountQqAiPanel({
-    webServer: {
-      register(route) { actionRoutes.push(route); return () => { const at = actionRoutes.indexOf(route); if (at >= 0) actionRoutes.splice(at, 1) } },
-    },
-  }, {
-    profile: 'web', config: {}, readFile: readFileSync, env,
-    // 垫片要先落盘再执行 —— 这里把写入内容抓下来（断言"真正执行的脏活"）。
-    writeFile: (file, content, encoding) => { shims.push({ file, content }); return writeFileSync(file, content, encoding) },
-    // 垫片心跳桩：日志文件视作"含心跳行"，mtime 由 spawnDetached 推进（见上面的 napcatLogMtime）。
-    stat: (target) => (String(target).endsWith('.log') ? { mtimeMs: napcatLogMtime } : statSync(target)),
-    readFile: (target, encoding) => (String(target).endsWith('.log') ? '=== shim start 2026/10/06 1:00:00 ===\r\n' : readFileSync(target, encoding)),
-    linkSources: { root: napcatRoot },
-    probe: async () => false,                                  // 6099 没在听
-    exists: (file) => /launcher\.bat$/i.test(file),             // 同目录只有 launcher.bat
-    napcatWaitMs: 0,                                            // 单测别真等 8 秒
-    spawnDetached: async ({ command, args }) => { spawned.push({ command, args }); shimRanNow(); return { pid: 4242, failed: false, code: 0, stdout: 'QAI-ELEVATED', stderr: '' } },
-    exec: (command, args, options, callback) => {
-      const done = typeof options === 'function' ? options : callback
-      // 假 tasklist：一个 NapCat 加载器 + 一个个人 QQ（后者绝不能被写进命令）
-      done(null, '"NapCatWinBootMain.exe","4100","Console","1","1 K"\n"QQ.exe","4200","Console","1","1 K"\n', '')
-    },
-  })
-  const startRoute = actionRoutes.find((r) => r.path === '/qqai/napcat/start')
-  const reloginRoute = actionRoutes.find((r) => r.path === '/qqai/napcat/relogin')
-
-  const startRes = makeResponse()
-  await startRoute.handler(fakeRequest('POST', {}, JSON_HEADERS), startRes)
-  const startBody = JSON.parse(startRes.out.body)
-  check('POST /qqai/napcat/start 写了垫片、并拉起了提权进程（垫片里才是 launcher.bat）',
-    startRes.out.status === 200 && startBody.ok === true && startBody.pid === 4242
-    && spawned.length === 1 && spawned[0].args.join(' ').includes('qq-napcat-launch.cmd')
-    && shims.length === 1 && shims[0].content.includes('launcher.bat')
-    && shims[0].content.includes('cd /d "'),
-    brief({ status: startRes.out.status, spawned: spawned.length, shim: shims[0]?.file }))
-  check('启动接口回的是人话（说自己走的哪条分支 + 扫码提示），并带回最新面板',
-    startBody.reason.includes('管理员') && startBody.reason.includes('扫码') && startBody.panel?.links?.length > 0,
-    brief(startBody.reason))
-  check('★启动之后会去确认结果：8 秒内 6099 没起来就如实说"还没起来"（不再盲报成功）',
-    startBody.elevated === true && startBody.started === false
-    && startBody.reason.includes('还没起来') && startBody.reason.includes('已是管理员'),
-    brief({ elevated: startBody.elevated, started: startBody.started, reason: startBody.reason.slice(0, 80) }))
-  check('启动接口拒绝 GET（这是个会拉进程的动作）',
-    await (async () => { const r = makeResponse(); await startRoute.handler(fakeRequest('GET'), r); return r.out.status })() === 405)
-  const startPlain = makeResponse()
-  await startRoute.handler(fakeRequest('POST', {}, { 'content-type': 'text/plain' }), startPlain)
-  check('启动接口拒绝非 JSON（CORS 简单请求挡在门外）', startPlain.out.status === 403, String(startPlain.out.status))
-  const startCross = makeResponse()
-  await startRoute.handler(fakeRequest('POST', {}, { ...JSON_HEADERS, origin: 'https://evil.example' }), startCross)
-  check('启动接口拒绝跨站', startCross.out.status === 403, String(startCross.out.status))
-
-  const reloginRes = makeResponse()
-  await reloginRoute.handler(fakeRequest('POST', {}, JSON_HEADERS), reloginRes)
-  const reloginBody = JSON.parse(reloginRes.out.body)
-  check('POST /qqai/napcat/relogin 只按加载器 PID 清理（假 tasklist 里的 QQ.exe 4200 没被写进垫片）',
-    reloginRes.out.status === 200 && reloginBody.ok === true
-    && String(shims[1]?.content ?? '').includes('taskkill /PID 4100')
-    && !String(shims[1]?.content ?? '').includes('4200')
-    && spawned[1]?.args.join(' ').includes('qq-napcat-launch.cmd'),
-    brief({ status: reloginRes.out.status, cmd: String(spawned[1]?.args.join(' ')).slice(-90) }))
-
-  /**
-   * ★ issue #2 的另一半（2026-10-16）：「搞了很久都说没有 napcat 脚本」。
-   *   面板原来只认 `qq-control.json` 里的 `napcatBat`，配置为空就直接说"未配置"；
-   *   而控制台早就会自己探测常见安装位置 ⇒ 同一台机器上"控制台能用、面板说没配"。
-   *   现在两边共用 `detectNapcatBat`（见 lib/napcat-launch.js）。
-   */
-  check('★配置里没填 napcatBat 时，面板自己也去常见位置探测（不再干说"未配置"）',
-    detectNapcatBat({
-      env: { LOCALAPPDATA: 'C:\\Users\\someone\\AppData\\Local' },
-      exists: (file) => String(file).endsWith('bootmain\\napcat.bat'),
-    }) === 'C:\\Users\\someone\\AppData\\Local\\Programs\\NapCat\\bootmain\\napcat.bat',
-    detectNapcatBat({ env: {}, exists: () => false }) || '(探测不到时应为空串)')
-  check('探测表把用户填的路径排在第一位（填了就用它）',
-    detectNapcatBat({ configured: 'D:\\My\\napcat.bat', env: {}, exists: () => true }) === 'D:\\My\\napcat.bat'
-    && detectNapcatBat({ configured: 'D:\\My\\napcat.bat', env: {}, exists: () => false }) === '')
+  // ① 停止：只按端口反查 PID；个人 QQ（4200）绝不进命令
   {
-    // 空配置 + 探测不到 NapCat 的机器：报错必须是**人话 + 下一步**（原来只有"未配置 NapCat 启动脚本"）
-    const noBatRoutes = []
-    mountQqAiPanel({
-      webServer: { register(route) { noBatRoutes.push(route); return () => { const at = noBatRoutes.indexOf(route); if (at >= 0) noBatRoutes.splice(at, 1) } } },
-    }, {
-      profile: 'web', config: {}, readFile: (file) => (String(file).endsWith('qq-control.json') ? '{"cwd":"C:\\\\QQAI"}' : readFileSync(file)),
-      writeFile: writeFileSync, env: { DSH_HOME: dir }, linkSources: { root: napcatRoot },
-      probe: async () => false, exists: () => false, napcatWaitMs: 0,
-      // 探测不到就**绝不能**真去拉进程
+    const spawned = []
+    const stopRoutes = mountWaylay({
+      probe: async () => false,
+      spawnDetached: async ({ command, args }) => { spawned.push({ command, args }); return { pid: 99, failed: false, code: 0 } },
+      exec: (command, args, options, callback) => {
+        const done = typeof options === 'function' ? options : callback
+        if (command === 'netstat') return done(null, `  TCP    127.0.0.1:${mockPort}    0.0.0.0:0    LISTENING    4100\n`, '')
+        if (command === 'tasklist') return done(null, '"QQ.exe","4100","Console","1","1 K"\n"QQ.exe","4200","Console","1","1 K"\n', '')
+        return done(null, '', '')
+      },
+    })
+    const stopRoute = stopRoutes.find((r) => r.path === '/qqai/waylay/stop')
+    const stopRes = makeResponse()
+    await stopRoute.handler(fakeRequest('POST', {}, JSON_HEADERS), stopRes)
+    const stopBody = JSON.parse(stopRes.out.body)
+    check('★Waylay 停止只按「监听端口的 PID」结束（个人 QQ 4200 与按名杀都不出现）',
+      stopBody.ok === true && stopBody.stopped === true && stopBody.pid === 4100
+      && !JSON.stringify(spawned).includes('4200') && !/taskkill \/IM/.test(JSON.stringify(spawned)),
+      brief({ pid: stopBody.pid, reason: String(stopBody.reason).slice(0, 80) }))
+    const stopGet = makeResponse()
+    await stopRoute.handler(fakeRequest('GET'), stopGet)
+    check('停止接口拒绝 GET', stopGet.out.status === 405, String(stopGet.out.status))
+    const stopPlain = makeResponse()
+    await stopRoute.handler(fakeRequest('POST', {}, { 'content-type': 'text/plain' }), stopPlain)
+    check('停止接口拒绝非 JSON（CORS 简单请求挡在门外）', stopPlain.out.status === 403, String(stopPlain.out.status))
+
+    const blindRoutes = mountWaylay({
+      probe: async () => false,
       spawnDetached: () => { throw new Error('不该被调用') },
       exec: (command, args, options, callback) => (typeof options === 'function' ? options : callback)(null, '', ''),
     })
-    const noBat = makeResponse()
-    await noBatRoutes.find((r) => r.path === '/qqai/napcat/start').handler(fakeRequest('POST', {}, JSON_HEADERS), noBat)
-    const noBatBody = JSON.parse(noBat.out.body)
-    check('★没配、也探测不到 NapCat 时：报错说清"填哪个文件、填在哪"',
-      noBatBody.ok === false && noBatBody.reason.includes('launcher.bat') && noBatBody.reason.includes('qq-control.json'),
-      brief(noBatBody.reason))
+    const blindRes = makeResponse()
+    await blindRoutes.find((r) => r.path === '/qqai/waylay/stop').handler(fakeRequest('POST', {}, JSON_HEADERS), blindRes)
+    const blindBody = JSON.parse(blindRes.out.body)
+    check('★Waylay 没在监听时拒绝盲杀（目标只来自端口，不来自镜像名）',
+      blindBody.ok === false && blindBody.reason.includes('没有找到监听'), brief(blindBody.reason))
   }
 
-  // 已经在跑时：不重复拉，指路"重新登录"
-  const runningRoutes = []
-  mountQqAiPanel({
-    webServer: { register(route) { runningRoutes.push(route); return () => { const at = runningRoutes.indexOf(route); if (at >= 0) runningRoutes.splice(at, 1) } } },
-  }, {
-    profile: 'web', config: {}, readFile: readFileSync, writeFile: writeFileSync, env,
-    linkSources: { root: napcatRoot }, probe: async () => true, exists: () => true,
-    spawnDetached: () => { throw new Error('不该被调用') },
-    exec: (command, args, options, callback) => (typeof options === 'function' ? options : callback)(null, '', ''),
-  })
-  const runningStart = makeResponse()
-  await runningRoutes.find((r) => r.path === '/qqai/napcat/start').handler(fakeRequest('POST', {}, JSON_HEADERS), runningStart)
-  const runningBody = JSON.parse(runningStart.out.body)
-  check('NapCat 已在运行时：启动接口不重复拉进程，改为提示用「重新登录」',
-    runningBody.ok === false && runningBody.reason.includes('重新登录'), brief(runningBody.reason))
-  const runningPanel = makeResponse()
-  await runningRoutes.find((r) => r.path === '/qqai/panel').handler(fakeRequest('GET'), runningPanel)
-  check('载荷里的 napcat.running 跟着探测结果走（true）',
-    JSON.parse(runningPanel.out.body).napcat.running === true, brief(JSON.parse(runningPanel.out.body).napcat))
+  // ② 启动：已在听不重复拉；命令没发出去如实报；成功路径回读真实登录态
+  {
+    const alreadyRoutes = mountWaylay({
+      probe: async () => true,
+      spawnDetached: () => { throw new Error('不该被调用') },
+    })
+    const alreadyRes = makeResponse()
+    await alreadyRoutes.find((r) => r.path === '/qqai/waylay/start').handler(fakeRequest('POST', {}, JSON_HEADERS), alreadyRes)
+    const alreadyBody = JSON.parse(alreadyRes.out.body)
+    check('Waylay 已在运行时：启动接口不重复拉进程', alreadyBody.ok === true && alreadyBody.already === true, brief(alreadyBody.reason))
 
-  /**
-   * ★ 2026-10-04 真机事故的回归：**提权失败必须如实报，不许盲报"已请求启动"**。
-   * 现场：桌面端（非管理员）点按钮 → powershell 的 `-Verb RunAs` 被静默拒绝 → 什么都没发生，
-   * 而旧实现把子进程输出丢了（stdio: 'ignore'），面板照样显示"已请求启动" ⇒ 用户"点了没反应"。
-   * 现在：抓到 exitCode / stderr 就必须回给用户。
-   */
-  const failRoutes = []
-  mountQqAiPanel({
-    webServer: { register(route) { failRoutes.push(route); return () => { const at = failRoutes.indexOf(route); if (at >= 0) failRoutes.splice(at, 1) } } },
-  }, {
-    profile: 'web', config: {}, readFile: readFileSync, writeFile: writeFileSync, env,
-    linkSources: { root: napcatRoot }, probe: async () => false, exists: () => true, napcatWaitMs: 0,
-    spawnDetached: async () => ({
-      pid: 0, failed: true, code: -1, stdout: '',
-      stderr: 'Start-Process : 此操作需要提升权限。/ This operation requires elevation.',
-    }),
-    exec: (command, args, options, callback) => (typeof options === 'function' ? options : callback)(null, '', ''),
-  })
-  const denied = makeResponse()
-  await failRoutes.find((r) => r.path === '/qqai/napcat/start').handler(fakeRequest('POST', {}, JSON_HEADERS), denied)
-  const deniedBody = JSON.parse(denied.out.body)
-  check('★提权被拒时：ok=false 且把 powershell 的原话带出来（不再显示假成功）',
-    deniedBody.ok === false && deniedBody.started === false
-    && deniedBody.reason.includes('没发出去') && deniedBody.reason.includes('elevation'),
-    brief(deniedBody.reason))
-  /**
-   * ★ 2026-10-04 真机根因回归：**提权后 `%cd%` 会变成 `C:\Windows\System32`**，
-   * 而 launcher.bat 用 `%cd%` 拼自己的路径（`%cd%\NapCatWinBootMain.exe` 等）⇒ 它去找
-   * `System32\NapCatWinBootMain.exe`，报一句 "is not recognized..." 就退出，界面上什么都看不到。
-   * 所以命令里必须自己 `cd /d "<脚本目录>"`，并且把输出重定向到日志（隐藏窗口里的报错要留痕）。
-   */
-  check('★启动命令自己 `cd /d` 回脚本目录（提权后 %cd% 会跑到 System32 —— "点了没反应"的根因之一）',
-    planText(planStart).includes('cd /d "C:\\NapCat\\bootmain"') && planText(planStart).includes('launcher.bat'),
-    planText(planStart).slice(-190))
-  check('★启动命令把 launcher 的输出重定向到日志（提权窗口是隐藏的，报错不能没人看见）',
-    planText(planStart).includes('>> "') && planText(planStart).includes('2>&1')
-    && String(planStart.shim?.logFile ?? '').endsWith('.log'),
-    `${planStart.shim?.logFile} ← ${planStart.shim?.content ?? ''}`)
-  /**
-   * 那个 cmd 窗口现在是空的（输出都进日志了），所以垫片自己要往窗口里写两行"指路"：
-   * 输出在哪、二维码去哪看——否则用户看到的就是"窗口运行了但什么都没有"（真机反馈过两次）。
-   * 注意 `chcp 65001`：不切码页，中文在 cmd 里就是乱码。
-   */
-  /**
-   * ★ 隐私（2026-10-06 审计）：NapCat 会把 `[WebUi] WebUi Token: …` 打进启动日志，
-   *   而接口会把日志"最后一行"贴回面板 —— 万一那一刻正好是 token 行，密钥就进了浏览器。
-   *   现在回显前先打码（URL 里的 ?token= 也一起挡）。
-   */
-  check('★回显日志前把密钥打码（NapCat 的 WebUi Token 行不会进面板）',
+    const deniedRoutes = mountWaylay({
+      probe: async () => false,
+      spawnDetached: async () => ({ pid: 0, failed: true, code: -1, stdout: '', stderr: 'Access is denied' }),
+    })
+    const deniedRes = makeResponse()
+    await deniedRoutes.find((r) => r.path === '/qqai/waylay/start').handler(fakeRequest('POST', {}, JSON_HEADERS), deniedRes)
+    const deniedBody = JSON.parse(deniedRes.out.body)
+    check('★启动命令没发出去时如实报（带出原话，不再假成功）',
+      deniedBody.ok === false && deniedBody.started === false
+      && deniedBody.reason.includes('没发出去') && deniedBody.reason.includes('Access is denied'),
+      brief(deniedBody.reason))
+
+    let probes = 0
+    const okRoutes = mountWaylay({
+      probe: async () => (probes += 1) > 1,
+      spawnDetached: async () => ({ pid: 4242, failed: false, code: 0, stdout: '', stderr: '' }),
+    })
+    const okRes = makeResponse()
+    await okRoutes.find((r) => r.path === '/qqai/waylay/start').handler(fakeRequest('POST', {}, JSON_HEADERS), okRes)
+    const okBody = JSON.parse(okRes.out.body)
+    check('★启动成功路径：端口起来后回读真实登录态（mock 已登录 ⇒ ok=true + loggedIn=true）',
+      okBody.ok === true && okBody.started === true && okBody.loggedIn === true, brief(okBody.reason))
+  }
+
+  // ③ 二维码：新鲜回 PNG / 过期 404 / POST 405 / 跨站 403 / 载荷指路
+  {
+    const freshRoutes = mountWaylay({
+      probe: async () => true,
+      stat: () => ({ mtimeMs: Date.now() - 30_000 }),
+      readBinary: (file) => Buffer.from(`PNG:${file}`, 'utf8'),
+    })
+    const freshRoute = freshRoutes.find((r) => r.path === '/qqai/waylay/qr')
+    const qrRes = makeResponse()
+    await freshRoute.handler(fakeRequest('GET', undefined, { 'sec-fetch-site': 'same-origin', 'sec-fetch-mode': 'no-cors' }), qrRes)
+    check('★二维码新鲜时：GET /qqai/waylay/qr 直接回 PNG（面板据此内嵌图片）',
+      qrRes.out.status === 200 && String(qrRes.out.headers['content-type']).includes('image/png')
+      && Buffer.isBuffer(qrRes.out.body) && qrRes.out.body.toString('utf8').startsWith('PNG:'),
+      `${qrRes.out.status} ${qrRes.out.headers['content-type']}`)
+    const qrPanel = makeResponse()
+    await freshRoutes.find((r) => r.path === '/qqai/panel').handler(fakeRequest('GET'), qrPanel)
+    const qrPayload = JSON.parse(qrPanel.out.body).waylay.qr
+    check('★载荷里的 waylay.qr 指路 /qqai/waylay/qr（新鲜时给 url，附年龄）',
+      qrPayload.fresh === true && qrPayload.url === '/qqai/waylay/qr' && qrPayload.ageSeconds >= 0, brief(qrPayload))
+    const postQr = makeResponse()
+    await freshRoute.handler(fakeRequest('POST', {}, JSON_HEADERS), postQr)
+    check('二维码路由拒绝 POST', postQr.out.status === 405, String(postQr.out.status))
+    const crossQr = makeResponse()
+    await freshRoute.handler(fakeRequest('GET', undefined, { origin: 'https://evil.example' }), crossQr)
+    check('二维码路由拒绝跨站（本机文件不外流）', crossQr.out.status === 403, String(crossQr.out.status))
+
+    const staleRoutes = mountWaylay({
+      probe: async () => true,
+      stat: () => ({ mtimeMs: Date.now() - 400_000 }),
+      readBinary: (file) => Buffer.from(`PNG:${file}`, 'utf8'),
+    })
+    const staleRes = makeResponse()
+    await staleRoutes.find((r) => r.path === '/qqai/waylay/qr').handler(fakeRequest('GET'), staleRes)
+    const staleBody = JSON.parse(staleRes.out.body)
+    check('★二维码过期（>5 分钟）时：404 + 人话（指路重新走一遍登录）',
+      staleRes.out.status === 404 && staleBody.ok === false && staleBody.reason.includes('过期'), brief(staleBody.reason))
+    const stalePanel = makeResponse()
+    await staleRoutes.find((r) => r.path === '/qqai/panel').handler(fakeRequest('GET'), stalePanel)
+    check('过期时载荷不给 url（客户端就不会显示一张废图）',
+      JSON.parse(stalePanel.out.body).waylay.qr.fresh === false
+      && JSON.parse(stalePanel.out.body).waylay.qr.url === '', brief(JSON.parse(stalePanel.out.body).waylay.qr))
+  }
+
+  // ④ spawnDetachedProcess 的行为侧断言（独立进程启动也用它）：绝不带 detached —— 真机总根源
+  {
+    const seen = []
+    const fakeSpawn = (command, args, options) => {
+      seen.push({ command, args, options })
+      const listeners = {}
+      const child = {
+        pid: 4321,
+        stdout: { on: () => {} },
+        stderr: { on: () => {} },
+        on: () => {},
+        once(event, handler) { listeners[event] = handler; return child },
+        unref: () => {},
+      }
+      setTimeout(() => listeners.exit?.(0), 0)
+      return child
+    }
+    const result = await spawnDetachedProcess({ command: 'cmd.exe', args: ['/c', 'x'], spawnImpl: fakeSpawn, waitMs: 50 })
+    check('★spawnDetachedProcess 不传 detached（传了的话命令根本不会执行 —— 真机总根源）',
+      seen.length === 1 && seen[0].options.detached === undefined && seen[0].options.windowsHide === true
+      && Array.isArray(seen[0].options.stdio) && seen[0].options.stdio[1] === 'pipe' && result.pid === 4321,
+      JSON.stringify({ options: seen[0]?.options, pid: result.pid }))
+    const failed = await spawnDetachedProcess({ command: 'x', spawnImpl: () => { throw new Error('ENOENT 找不到 cmd.exe') }, waitMs: 50 })
+    check('spawnDetachedProcess 把 spawn 抛出的错误如实带回（不静默）',
+      failed.failed === true && String(failed.message).includes('ENOENT'), brief(failed))
+  }
+
+  // ⑤ 日志回显的密钥打码（Waylay 注入日志与旧后端同一形态）
+  check('★回显日志前把密钥打码（token 行不会进面板）',
     redactSecrets('10-05 23:07 [info] [WebUi] WebUi Token: placeholder-token') === '10-05 23:07 [info] [WebUi] WebUi Token: <已隐藏>'
-    && redactSecrets('User Panel Url: http://127.0.0.1:6099/webui?token=placeholder-token').includes('token=<已隐藏>')
+    && redactSecrets('User Panel Url: http://127.0.0.1:13000/api?token=placeholder-token').includes('token=<已隐藏>')
     && redactSecrets('password: hunter2secret').includes('<已隐藏>')
     && redactSecrets('10-05 23:07 [info] 等待网络连接...') === '10-05 23:07 [info] 等待网络连接...',
     redactSecrets('WebUi Token: placeholder-token'))
-  check('★垫片会收紧启动日志的权限（撤掉继承的 Users:(RX)，只留本人+管理员+SYSTEM）',
-    String(planStart.shim?.content ?? '').includes('icacls "')
-    && String(planStart.shim?.content ?? '').includes('/inheritance:r')
-    && String(planStart.shim?.content ?? '').includes('*S-1-5-32-544:F')
-    && String(planStart.shim?.content ?? '').includes('>nul 2>&1'),
-    String(planStart.shim?.content ?? '').split('\r\n').find((l) => l.includes('icacls')) ?? '（垫片里没有 icacls）')
 
-  check('★垫片往窗口里写两行指路（输出在哪 / 二维码去哪看），并先切 UTF-8 码页',
-    String(planStart.shim?.content ?? '').includes('chcp 65001')
-    && String(planStart.shim?.content ?? '').includes('[QQ助手] NapCat 正在启动')
-    && String(planStart.shim?.content ?? '').includes('二维码会自动显示在 DSH 面板'),
-    String(planStart.shim?.content ?? '').split('\r\n').slice(0, 5).join(' ｜ '))
-  check('重新登录的垫片也带 `cd /d`、日志重定向与 taskkill（同一条坑，别只修一半）',
-    planText(planRelogin).includes('cd /d "C:\\NapCat\\bootmain"') && planText(planRelogin).includes('>> "')
-    && planText(planRelogin).includes('taskkill /PID 4100'),
-    planText(planRelogin).slice(-160))
-  const nonzero = []
-  mountQqAiPanel({
-    webServer: { register(route) { nonzero.push(route); return () => { const at = nonzero.indexOf(route); if (at >= 0) nonzero.splice(at, 1) } } },
-  }, {
-    profile: 'web', config: {}, readFile: readFileSync, writeFile: writeFileSync, env,
-    linkSources: { root: napcatRoot }, probe: async () => false, exists: () => true, napcatWaitMs: 0,
-    spawnDetached: async () => ({ pid: 9, failed: false, code: 1, stdout: '', stderr: 'Access is denied' }),
-    exec: (command, args, options, callback) => (typeof options === 'function' ? options : callback)(null, '', ''),
-  })
-  const nzRes = makeResponse()
-  await nonzero.find((r) => r.path === '/qqai/napcat/start').handler(fakeRequest('POST', {}, JSON_HEADERS), nzRes)
-  check('★非零退出码也算失败：如实报"Access is denied"',
-    JSON.parse(nzRes.out.body).ok === false && JSON.parse(nzRes.out.body).reason.includes('Access is denied'),
-    brief(JSON.parse(nzRes.out.body).reason))
-  /**
-   * ★ 假成功回归（真机抓到：NapCat 本来就在跑时，提权被悄悄拦下、垫片根本没执行，
-   *   而"6099 在听"这条判据永远为真 ⇒ 界面报"重启成功"，其实什么都没发生）。
-   *   现在以**垫片心跳**为判据：没心跳就 `ok:false` + 说明这次点击什么都没发生。
-   */
-  const noHeartbeat = []
-  mountQqAiPanel({
-    webServer: { register(route) { noHeartbeat.push(route); return () => { const at = noHeartbeat.indexOf(route); if (at >= 0) noHeartbeat.splice(at, 1) } } },
-  }, {
-    profile: 'web', config: {}, readFile: readFileSync, writeFile: writeFileSync, env,
-    linkSources: { root: napcatRoot }, probe: async () => true, exists: () => true, napcatWaitMs: 0,
-    // 日志文件"很旧"（或干脆不存在）⇒ 没有心跳
-    stat: () => ({ mtimeMs: Date.now() - 600_000 }),
-    spawnDetached: async () => ({ pid: 7, failed: false, code: 0, stdout: 'QAI-ELEVATED', stderr: '' }),
-    exec: (command, args, options, callback) => (typeof options === 'function' ? options : callback)(null, '"NapCatWinBootMain.exe","4100","Console","1","1 K"\n', ''),
-  })
-  const noBeatRes = makeResponse()
-  await noHeartbeat.find((r) => r.path === '/qqai/napcat/relogin').handler(fakeRequest('POST', {}, JSON_HEADERS), noBeatRes)
-  const noBeatBody = JSON.parse(noBeatRes.out.body)
-  check('★垫片没留下心跳时：ok=false，并明说"这次点击什么都没发生"（不再拿 6099 在听当成功）',
-    noBeatBody.ok === false && noBeatBody.shimRan === false
-    && noBeatBody.reason.includes('没有留下心跳') && noBeatBody.reason.includes('什么都没发生'),
-    brief(noBeatBody.reason.slice(0, 120)))
-  check('shimHeartbeatFresh：新鲜 + 有心跳 → true；文件太旧 / 读不到 / 没有心跳行 → false',
-    shimHeartbeatFresh('x.log', { stat: () => ({ mtimeMs: Date.now() }), readFile: () => '=== shim start 1:00 ===\n' }) === true
-    && shimHeartbeatFresh('x.log', { stat: () => ({ mtimeMs: Date.now() - 600_000 }), readFile: () => '=== shim start 1:00 ===\n' }) === false
-    && shimHeartbeatFresh('x.log', { stat: () => ({ mtimeMs: Date.now() }), readFile: () => 'launcher output only\n' }) === false
-    && shimHeartbeatFresh('x.log', { stat: () => { throw new Error('ENOENT') }, readFile: () => '' }) === false,
-    '心跳是"命令真的落地了"的唯一可靠证据')
+  mockServer.close()
 }
 
 dispose()
 check('dispose 注销了全部路由（配置热重载后能重新挂载，不会撞 duplicate route）',
-  registered.length === 0 && disposed.length === 10, `left=${registered.length} disposed=${disposed.length}`)
+  registered.length === 0 && disposed.length === 11, `left=${registered.length} disposed=${disposed.length}`)
 mountQqAiPanel(fakeHost, {
   profile: 'web', config: {}, readFile: readFileSync, writeFile: writeFileSync, env,
 })
-check('注销后可以再次挂载（模拟宿主重建插件条目）', registered.length === 10, String(registered.length))
+check('注销后可以再次挂载（模拟宿主重建插件条目）', registered.length === 11, String(registered.length))
 
 // ------------------------------------------------- 3. 客户端 bundle 冒烟 ---- ----
 const clientText = readFileSync(join(import.meta.dirname, '..', 'client', 'client.js'), 'utf8')
@@ -1972,8 +1704,9 @@ try {
     && !/QQai/.test(clientText), registered2?.options?.label?.())
   check('客户端 fetch 的路由名与服务端注册的一致（防前后端漂移）',
     clientText.includes('/qqai/panel') && clientText.includes('/qqai/panel/set')
-    && clientText.includes('/qqai/napcat/start') && clientText.includes('/qqai/napcat/relogin')
-    && registered.some((r) => r.path === '/qqai/panel') && registered.some((r) => r.path === '/qqai/panel/set'))
+    && clientText.includes('/qqai/waylay/start') && clientText.includes('/qqai/waylay/stop')
+    && registered.some((r) => r.path === '/qqai/panel') && registered.some((r) => r.path === '/qqai/panel/set')
+    && registered.some((r) => r.path === '/qqai/waylay/start') && registered.some((r) => r.path === '/qqai/waylay/stop'))
   check('快捷操作把 ok:false 当"解释"显示（不当异常抛掉）——按钮点不动时用户要看到原因',
     clientText.includes('payload.ok === true') && clientText.includes('busyAction'))
   /**
@@ -2104,13 +1837,13 @@ try {
   /**
    * ★ "没弹出二维码啊"的正面回答：面板里直接贴图（image/png 那条路由）+ 一个刷新按钮。
    */
-  check('★客户端在二维码新鲜时内嵌 <img>（src 指向 /qqai/napcat/qr，带时间戳防缓存）',
+  check('★客户端在二维码新鲜时内嵌 <img>（src 用服务端给的 qr.url=/qqai/waylay/qr，带时间戳防缓存）',
     clientText.includes('qqai-qr-img') && clientText.includes('qr.url')
     && clientText.includes('?t=${qrStamp}') && clientText.includes('刷新二维码'),
     clientText.includes('qqai-qr-img') ? 'ok' : '缺少内嵌二维码')
   /**
    * ★ 白屏回归（用户 2026-10-04："为啥点击刷新二维码会白屏"）：
-   *   `setState({ qrStamp })` 整对象替换会把 `data` 一起清掉 → 下一帧读 `data.napcat` 抛错 → **整页白**。
+   *   `setState({ qrStamp })` 整对象替换会把 `data` 一起清掉 → 下一帧读 `data.waylay` 抛错 → **整页白**。
    *   两条断言：①「刷新二维码」必须走函数式更新；② 面板外面套一层渲染边界（以后再有类似 bug 也只显示一句话）。
    */
   check('★「刷新二维码」用函数式 setState（整对象替换会清掉 data → 白屏）',
@@ -2126,9 +1859,9 @@ try {
    *   两件事都要有：①按钮旁边那句"等几秒二维码会出现"；②**真的会自动出现**——
    *   启动成功后开始盯二维码（每 3 秒刷一次面板），图一出来就停并提示去扫。
    */
-  check('★「启动 NapCat」旁边的状态写明"等几秒，二维码会出现在下面"（渲染出来的文本在浅渲染那段再验）',
-    clientText.includes('二维码会出现在下面') && clientText.includes('正在启动 NapCat…等几秒'),
-    clientText.includes('二维码会出现在下面') ? 'ok' : '缺少这句提示')
+  check('★「启动 Waylay」旁边写明接下来会发生什么（注入不弹窗 / 等 13000 起来）',
+    clientText.includes('正在启动 Waylay') && clientText.includes('不会弹窗口'),
+    clientText.includes('正在启动 Waylay') ? 'ok' : '缺少这句提示')
   check('★启动成功后自动盯二维码（每 3 秒刷面板、出现即停、90 秒给一句人话）',
     clientText.includes('watchingQr') && clientText.includes('setInterval(() => { void load() }, 3000)')
     && clientText.includes('90_000') && clientText.includes('二维码已经出来了'),
@@ -2259,8 +1992,8 @@ const clientVersion = (() => {
       patchFile: '/srv/dsh/profiles/desktop/cordis.patch.yml',
       patchExists: true,
       notes: { apply: '写入说明', scope: '范围说明' },
-      // NapCat 的实时状态（快捷操作按钮据此禁用）
-      napcat: { running: false, port: 6099 },
+      // Waylay 的实时状态（快捷操作按钮与状态行据此渲染）
+      waylay: { listening: false, loggedIn: null, port: 13000, level: 'off', text: 'Waylay 未运行（13000 没有监听）', qr: { fresh: false, ageSeconds: -1, url: '' } },
       // v0.6.8：桥的运行状态（"登录了却没有反馈"靠这一行回答）。
       bridge: {
         present: true, file: '/srv/dsh/qq-runtime.json', ageSeconds: 2, uptimeSeconds: 600,
@@ -2274,7 +2007,7 @@ const clientVersion = (() => {
       },
       // 「相关链接」整组（账号第一、调试台压最底下）——渲染在标题正下方、开关分组之前。
       links: [
-        { id: 'account', label: 'QQ助手账号（登录 / 扫码）', href: '/qqai/account', hint: '机器人账号的扫码 / 登录状态页；**需要先运行 NapCat**（没起来就点上面的「启动 NapCat」），点开就是带 token 的地址，不用手输' },
+        { id: 'account', label: '机器人账号（Waylay 控制台）', href: 'http://127.0.0.1:13000/', hint: '扫码 / 登录状态 / 收发诊断都在 Waylay 的 13000 控制台；**需要先运行 Waylay**（没起来就点上面的「启动 Waylay」）' },
         { id: 'changelog', label: '更新日志（v9.9.9）', href: 'https://example.invalid/CHANGELOG.md', hint: '每个版本的改动' },
         { id: 'readme-debug', label: '调试文档', href: 'https://example.invalid/docs/DEBUG.md', hint: 'trace / 回放 / 体检 / 注入的用法' },
         { id: 'console', label: '调试台（独立控制台）', href: '/qqai/console', running: false, state: '未启动 · 需要单独运行：node x', hint: '调试台是独立进程' },
@@ -2440,45 +2173,51 @@ const clientVersion = (() => {
   // 注意：不能拿「QQ助手」当下界锚点——CSS 是同一棵树里的文本节点，注释里就写着「QQ助手」，
   // 那个下标在最前面（我第一次就是这么红的）。锚点用「对话基础」（确定在链接组后面）。
   check('「相关链接」整组渲染在开关分组之前（贴着头部的第一块）',
-    readyText.includes('相关链接') && readyText.includes('QQ助手账号（登录 / 扫码）')
-    && readyText.includes('不用手输')
+    readyText.includes('相关链接') && readyText.includes('机器人账号（Waylay 控制台）')
+    && readyText.includes('需要先运行 Waylay')
     && readyText.indexOf('相关链接') < readyText.indexOf('对话基础'),
     readyText.slice(readyText.indexOf('相关链接') - 40, readyText.indexOf('相关链接') + 120))
   check('组内顺序：账号第一 → 更新日志 → 调试文档 → 调试台压最底下，链接目标都挂上了',
-    readyText.indexOf('QQ助手账号') < readyText.indexOf('更新日志')
+    readyText.indexOf('机器人账号') < readyText.indexOf('更新日志')
     && readyText.indexOf('更新日志') < readyText.indexOf('调试文档')
     && readyText.indexOf('调试文档') < readyText.indexOf('调试台')
-    && ready.hrefs.includes('/qqai/account') && ready.hrefs.includes('/qqai/console'),
+    && ready.hrefs.includes('http://127.0.0.1:13000/') && ready.hrefs.includes('/qqai/console'),
     ready.hrefs.join(' | '))
   check('账号入口在整份页面里只出现一次（不会组里 + 别处各来一条）',
-    readyText.lastIndexOf('QQ助手账号') === readyText.indexOf('QQ助手账号'),
-    String(readyText.split('QQ助手账号').length - 1))
+    readyText.lastIndexOf('机器人账号') === readyText.indexOf('机器人账号'),
+    String(readyText.split('机器人账号').length - 1))
   // ★ 2026-10-04 真机："点击账号没反应" —— 除了守卫那个 403，还有一半原因是**只有那行蓝字是链接**，
   //   右边那段灰色说明是普通 span，点在说明上什么都不会发生。现在整行是一个 <a>，点哪儿都能进。
-  const accountRow = ready.linkRows.find((row) => row.href === '/qqai/account')
+  const accountRow = ready.linkRows.find((row) => row.href === 'http://127.0.0.1:13000/')
   check('★账号入口整行都可点（说明文字也在 <a> 里），且是新标签页打开',
     accountRow !== undefined
-    && accountRow.text.includes('QQ助手账号（登录 / 扫码）') && accountRow.text.includes('不用手输')
+    && accountRow.text.includes('机器人账号（Waylay 控制台）') && accountRow.text.includes('需要先运行 Waylay')
     && accountRow.target === '_blank',
     brief(accountRow))
-  // 用户 2026-10-04："这旁边加一个描述，比如需要先运行 NapCat"。
-  check('★账号入口的说明里写明"需要先运行 NapCat"（并指路「启动 NapCat」）',
-    accountRow.text.includes('需要先运行 NapCat') && accountRow.text.includes('启动 NapCat'),
+  // 用户 2026-10-04："这旁边加一个描述，比如需要先运行 NapCat"（现在换成 Waylay，同样的道理）。
+  check('★账号入口的说明里写明"需要先运行 Waylay"（并指路「启动 Waylay」）',
+    accountRow.text.includes('需要先运行 Waylay') && accountRow.text.includes('启动 Waylay'),
     brief(accountRow.text.slice(-90)))
   const consoleRow = ready.linkRows.find((row) => row.href === '/qqai/console')
   check('调试台那一行同样整行可点（含"未启动 · 需要单独运行…"那段）',
     consoleRow !== undefined && consoleRow.text.includes('调试台（独立控制台）')
     && consoleRow.text.includes('未启动') && consoleRow.target === '_blank',
     brief(consoleRow))
-  // 快捷操作（用户："不能自己快捷启动吗？比如加到哪个控制选项中"）：两个按钮，且状态跟着 napcat.running 走。
-  check('浅渲染：「快捷操作」区有「启动 NapCat」与「重新登录（扫码）」两个按钮',
-    readyText.includes('快捷操作') && ready.buttons.some((b) => b.text.includes('启动 NapCat'))
-    && ready.buttons.some((b) => b.text.includes('重新登录')),
+  // 快捷操作（用户："不能自己快捷启动吗？比如加到哪个控制选项中"）：两个按钮，状态跟着 waylay 走。
+  check('浅渲染：「快捷操作」区有「启动 Waylay」与「停止」两个按钮',
+    readyText.includes('快捷操作') && ready.buttons.some((b) => b.text.includes('启动 Waylay'))
+    && ready.buttons.some((b) => b.text.includes('停止')),
     brief(ready.buttons))
   // 用户 2026-10-04："应该在启动旁边加个提示，比如过会会出现二维码，而不是什么也没有"。
-  check('★浅渲染：按钮旁边确实渲染出了"等几秒，二维码会出现在下面"那句',
-    readyText.includes('二维码会出现在下面'),
-    brief(readyText.slice(readyText.indexOf('快捷操作'), readyText.indexOf('快捷操作') + 130)))
+  // ★ Waylay 版的对应口径：状态行**直接用服务端那句 `waylay.text`**（它已经分清"端口在听"与"会话就绪"两件事），
+  //   前端不自己编——否则两处口径迟早不一致。
+  check('★浅渲染：状态行直接显示服务端那句 `waylay.text`（前端不自己编口径）', (() => {
+    const withText = shallowText(render, [{
+      ...fixture,
+      data: { ...fixture.data, waylay: { listening: true, port: 13000, loggedIn: false, text: '会话未就绪（端口在听≠能收发）' } },
+    }])
+    return withText.text.includes('会话未就绪（端口在听≠能收发）')
+  })(), brief(readyText.slice(readyText.indexOf('快捷操作'), readyText.indexOf('快捷操作') + 130)))
   // 用户 2026-10-04："把快捷操作拉到相关链接上边"（也顺：没起来时"先把它启动起来"比"点开账号页"更该先看到）。
   // ⚠️ 注意仍不能用 `indexOf('相关链接')`：CSS 是同一棵树里的文本节点，它的注释里也写着这四个字
   //    （第一次就是这么红的）→ 用 lastIndexOf 取**渲染出来的那个**标题。
@@ -2486,15 +2225,26 @@ const clientVersion = (() => {
     readyText.indexOf('快捷操作') < readyText.lastIndexOf('相关链接')
     && readyText.lastIndexOf('相关链接') < readyText.indexOf('对话基础'),
     `快捷操作@${readyText.indexOf('快捷操作')} 相关链接@${readyText.lastIndexOf('相关链接')} 对话基础@${readyText.indexOf('对话基础')}`)
-  check('NapCat 未运行时：启动按钮可点，且写明"未运行"', (() => {
-    const start = ready.buttons.find((b) => b.text.includes('启动 NapCat'))
-    return start !== undefined && start.disabled === false && readyText.includes('NapCat：未运行')
-  })(), brief(ready.buttons.find((b) => b.text.includes('启动 NapCat'))))
-  const napcatOn = shallowText(render, [{ ...fixture, data: { ...fixture.data, napcat: { running: true, port: 6099 } } }])
-  check('NapCat 已在运行时：启动按钮变禁用、文案变「NapCat 运行中」（不让人重复点）',
-    napcatOn.buttons.some((b) => b.text.includes('NapCat 运行中') && b.disabled === true)
-    && napcatOn.text.includes('运行中（127.0.0.1:6099）'),
-    brief(napcatOn.buttons))
+  check('Waylay 未运行时：启动按钮可点、停止按钮禁用（没什么可停的）', (() => {
+    const start = ready.buttons.find((b) => b.text.includes('启动 Waylay'))
+    const stop = ready.buttons.find((b) => b.text.includes('停止'))
+    return start !== undefined && start.disabled === false && stop !== undefined && stop.disabled === true
+  })(), brief(ready.buttons.filter((b) => b.text.includes('Waylay') || b.text.includes('停止'))))
+  const waylayOn = shallowText(render, [{
+    ...fixture,
+    data: {
+      ...fixture.data,
+      waylay: {
+        listening: true, port: 13000, loggedIn: true, uin: '12340001', nickname: '凛',
+        text: 'Waylay 运行中（13000 在听）· 已登录',
+      },
+    },
+  }])
+  check('Waylay 已在运行时：启动按钮变禁用、文案变「Waylay 运行中」，并显示当前登录账号',
+    waylayOn.buttons.some((b) => b.text.includes('Waylay 运行中') && b.disabled === true)
+    && waylayOn.text.includes('已登录')
+    && waylayOn.text.includes('12340001'),
+    brief(waylayOn.buttons))
   check('浅渲染：直接显示出厂默认值（默认：开/关），不再出现"非默认"字样',
     readyText.includes('默认：关') && !readyText.includes('非默认'))
   const flipped = shallowText(render, [{

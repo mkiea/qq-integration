@@ -5,7 +5,8 @@
  * the inbound message all the way to the outbound reply under one trace id.
  */
 import { EventEmitter } from 'node:events'
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { Config } from '../lib/index.js'
@@ -183,6 +184,114 @@ async function boot(overrides = {}) {
   h.bridge.stop()
 }
 
+/**
+ * ---- 1b) 白名单拒绝理由必须「可操作」----
+ *
+ * 2026-10-30 主人问「新加白名单好友的好像没有创建新对话」。真实取证：号码 22:50:17 才写进
+ * `cordis.patch.yml`，而对方 22:49 那两条消息全被拒；桥只在收到消息时建会话 ⇒ 没有新对话。
+ * 原来的 reason 只说"不在白名单"，不说号码、不说怎么加、不说加完会发生什么 —— 看起来像 bug。
+ */
+{
+  const h = await boot()
+  await h.send('你好', { userId: 12340001, messageType: 'private', groupId: undefined })
+  const privateReason = h.findReason('私聊用户不在 allowUsers 白名单')[0]
+  check('★私聊被拒的理由带号码 + 处置办法',
+    Boolean(privateReason) && privateReason.reason.includes('12340001') && privateReason.reason.includes('cordis.patch.yml'),
+    privateReason?.reason ?? '(没有留下 reason)')
+  h.bridge.stop()
+}
+
+/**
+ * ---- 1c) 有人加好友：不能一声不响 ----
+ *
+ * 真机 2026-10-30 22:49:32 抓到 `notice/friend_add`，原来落到"未处理的 notice"，
+ * 主人这边一个字都没有；它前面一秒的两条私聊又全被拒 —— 两块静默叠成"新加好友没对话"。
+ */
+{
+  const h = await boot()
+  await h.notice({ noticeType: 'friend_add', subType: '', userId: 4321, selfId: 999 })
+  const unlisted = h.findReason('新好友 4321 不在 allowUsers 白名单')[0]
+  check('★新增好友不在白名单：留 reason', Boolean(unlisted) && unlisted.ok === false, JSON.stringify(unlisted ?? {}))
+  check('★新增好友不在白名单：私聊推给管理员',
+    h.server.sent.some((m) => m.messageType === 'private' && m.targetId === 1001 && JSON.stringify(m.segments).includes('4321')),
+    JSON.stringify(h.server.sent).slice(0, 200))
+  await h.notice({ noticeType: 'friend_add', subType: '', userId: 1002, selfId: 999 })
+  const listed = h.findReason('新好友 1002 已在 allowUsers 白名单里')[0]
+  check('新增好友已在白名单：写成"等对方发消息"', Boolean(listed) && listed.ok === true, JSON.stringify(listed ?? {}))
+  h.bridge.stop()
+}
+
+/**
+ * ---- 1d) 入站图片：url 失效时必须还能把图拿到 ----
+ *
+ * 真机 2026-10-30（主人：「还有图片没下载成功」）：私聊图片段的 url 是
+ * `gchat.qpic.cn/download?appid=1406&fileid=…&spec=0`，**缺 rkey** ⇒
+ * `{"retcode":-5503010,"retmsg":"invalid rkey","retryflag":1}` + HTTP 400，
+ * 而同一张图早被 QQ 自己下到 `nt_data/{Pic,Emoji/emoji-recv}/<月>/Ori/<md5>.<ext>`。
+ * 更糟的是桥当时无条件写 `media ok=true 私聊图片已落盘`，日志里一片绿。
+ *
+ * 这里用一个**真会回 400** 的本地服务复现，钉三件事：
+ *   ① 错误文案把 QQ 的 retmsg 带出来（否则只有 "download HTTP 400"，谁也查不下去）；
+ *   ② NTQQ 缓存按文件名兜底真的能把图落进 qq-images（大小写不敏感）；
+ *   ③ 全失败时 trace 不许再写"已落盘"。
+ */
+{
+  const server = createServer((req, res) => {
+    res.writeHead(400, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({ retcode: -5503010, retmsg: 'invalid rkey', retryflag: 1 }))
+  })
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve))
+  const deadUrl = `http://127.0.0.1:${server.address().port}/download?appid=1406&fileid=x&spec=0`
+  // 造一棵"NTQQ 缓存"：段里给大写、磁盘上是小写，验证大小写不敏感
+  const cacheRoot = join(dir, 'nt_data')
+  const oriDir = join(cacheRoot, 'Emoji', 'emoji-recv', '2026-10', 'Ori')
+  mkdirSync(oriDir, { recursive: true })
+  writeFileSync(join(oriDir, 'abcdef0123456789abcdef0123456789.jpg'), Buffer.from('ffd8ffe000104a4649460001010', 'hex'))
+  const h = await boot({ qqMediaCacheRoots: [cacheRoot], visionMode: 'tool' })
+  await h.send('', { messageType: 'private', groupId: undefined, images: [{ kind: 'mface', url: deadUrl, file: 'ABCDEF0123456789ABCDEF0123456789.jpg', summary: '' }] })
+  await h.waitForReason('私聊图片已落盘 1/1')
+  check('★url 报 400 时用 NTQQ 缓存兜底（1/1 落盘）', h.findReason('私聊图片已落盘 1/1').length === 1,
+    h.findReason('私聊图片').map((e) => e.reason).join(' | '))
+  const saved = (() => { try { return readdirSync(join(dir, 'qq-images')).filter((n) => n.startsWith('qq-img-')) } catch { return [] } })()
+  check('★兜底来的图真的落到 qq-images', saved.length === 1, saved.join(','))
+  await h.send('', { messageType: 'private', groupId: undefined, messageId: 'img-miss-1', images: [{ kind: 'image', url: deadUrl, file: 'not-in-cache.jpg', summary: '' }] })
+  await h.waitForReason('私聊图片全部下载失败')
+  const all = h.findReason('私聊图片全部下载失败')[0]
+  check('★全失败时 trace 不再写「已落盘」', Boolean(all) && all.ok === false, JSON.stringify(all ?? {}))
+  check('★失败理由带出 QQ 的 retmsg（invalid rkey）', String(all?.reason ?? '').includes('invalid rkey'), all?.reason ?? '')
+  check('★失败理由说明缓存里也没找到', String(all?.reason ?? '').includes('not-in-cache.jpg'), all?.reason ?? '')
+  h.bridge.stop()
+  await new Promise((resolve) => server.close(resolve))
+}
+
+/**
+ * ---- 1e) 红包：认得出来，但绝不假装抢得到 ----
+ *
+ * 主人 2026-10-30「顺便写一个抢红包的代码」。链路里没有开红包的口子（见 lib/redpacket.js 头部），
+ * 所以桥只做「看得见」：trace 记一条「发现…未领取」+ 运营计数 + 私聊提醒管理员。
+ * 这条测试钉的就是"**别写成已领取**" —— 一个静默失败的功能比没有功能糟得多。
+ */
+{
+  // 运营计数只在 groupOpsEnabled + opsReportEnabled 都开时才记（#countOps 的口径），这里按真实开关跑
+  const h = await boot({ groupOpsEnabled: true, opsReportEnabled: true })
+  const cardJson = JSON.stringify({
+    app: 'com.tencent.mobileqq.redpacket',
+    prompt: '[QQ红包]恭喜发财',
+    meta: { detail_1: { title: '恭喜发财' } },
+  })
+  await h.send('', { messageId: 'rp-1', raw: { message: [{ type: 'json', data: { data: cardJson } }] } })
+  await h.waitForReason('发现红包')
+  const ev = h.findReason('发现红包')[0]
+  check('★红包落 trace，且理由写明「未领取」', Boolean(ev) && ev.ok === false && ev.reason.includes('未领取'), JSON.stringify(ev ?? {}))
+  check('★红包文案里不出现"已领取"', h.findReason('已领取').length === 0, h.findReason('已领取').map((e) => e.reason).join(' | '))
+  check('★红包提醒私聊发给管理员',
+    h.server.sent.some((m) => m.messageType === 'private' && m.targetId === 1001 && JSON.stringify(m.segments).includes('红包')),
+    JSON.stringify(h.server.sent).slice(0, 160))
+  const totals = h.bridge.opsCounters.totals({ days: 1 })
+  check('★运营计数记了一笔红包', (totals?.redpacket ?? 0) >= 1, JSON.stringify(totals))
+  h.bridge.stop()
+}
+
 // ---- 2) 静默时段 ----
 {
   const h = await boot({ quietHoursEnabled: true, quietHours: ['0:00-23:59'], quietWeekendExempt: false })
@@ -252,7 +361,14 @@ async function boot(overrides = {}) {
 {
   const h = await boot()
   await h.request({ requestType: 'group', subType: 'add', userId: 5001, groupId: 2002, comment: '进群', flag: 'f1' })
-  check('request 未开启验证留下 reason', h.findReason('verifyEnabled=false').length === 1)
+  /**
+   * 断言口径改「有没有」而不是「几条=1」：一次被忽略的请求会留**两条**事实 —
+   * ① `stage=request` 的分支 reason；② `#notifyRequestDrop` 写的事件（stage=request-drop，
+   * 里面同样带 "verifyEnabled=false"）。`=== 1` 会随通知链的增长而假失败（2026-10-30 复现：
+   * 改动前就是红的）。这里只钉「分支确实留了 reason」。
+   */
+  const drops = h.findStage('request').filter((e) => e.ok === false && (e.reason ?? '').includes('verifyEnabled=false'))
+  check('request 未开启验证留下 reason', drops.length >= 1, `stage=request 命中 ${drops.length} 条 / 全部命中 ${h.findReason('verifyEnabled=false').length} 条`)
   h.bridge.stop()
 }
 
@@ -322,6 +438,27 @@ async function boot(overrides = {}) {
   const secretKeys = ['ttsApiKey', 'sttApiKey', 'imageGenApiKey', 'notifyToken', 'notifyPushUrl', 'accessToken', 'verifyKeyword', 'ttsLocalRefAudio']
   check('生效配置不含任何密钥类字段', !secretKeys.some((key) => key in (runtime.features ?? {})), secretKeys.filter((k) => k in (runtime.features ?? {})).join(','))
   check('生效配置标明口令是否已配置（不含内容）', typeof runtime.features.verifyKeywordConfigured === 'boolean')
+  /**
+   * ★白名单差集（2026-10-30「新加白名单好友没有新对话」）：桥只在收到消息时建会话，
+   * 所以控制台必须能显示「已放行、还没说过话」。断言用**不变量**而不是写死的名单：
+   * 差集 = allowUsers − (本次运行的活会话 ∪ 磁盘上的 qq-sessions.json)。
+   * 磁盘那一半不能省 —— 前面的用例都在同一个 `dir` 里跑，`u:1001` 早就写过映射；
+   * 而且这正是"重启后不许把老会话误报成没说过话"的那条约束。
+   */
+  const liveKeys = new Set(runtime.sessions.map((s) => s.chatKey))
+  let diskKeys = {}
+  try { diskKeys = JSON.parse(readFileSync(join(dir, 'qq-sessions.json'), 'utf8')) } catch { diskKeys = {} }
+  const knownKeys = new Set([...liveKeys, ...Object.keys(diskKeys)])
+  const expectedPending = [1001, 1002].filter((id) => !knownKeys.has(`u:${id}`))
+  check('★白名单差集 = allowUsers 减去已有会话（含磁盘映射）',
+    JSON.stringify(runtime.whitelistPending?.users) === JSON.stringify(expectedPending)
+      && Array.isArray(runtime.whitelistPending?.groups) && runtime.whitelistPending.groups.length === 0,
+    `快照=${JSON.stringify(runtime.whitelistPending)} 期望=${JSON.stringify(expectedPending)} 磁盘=${Object.keys(diskKeys).join(',')}`)
+  await h.send('私聊一句', { messageType: 'private', userId: 1002, groupId: undefined })
+  const afterDm = JSON.parse(readFileSync(join(dir, 'qq-runtime.json'), 'utf8'))
+  check('★白名单差集：说过话的人从 pending 里消失',
+    !(afterDm.whitelistPending?.users ?? []).includes(1002),
+    JSON.stringify(afterDm.whitelistPending))
   h.bridge.stop()
 }
 

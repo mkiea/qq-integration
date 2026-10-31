@@ -137,12 +137,12 @@ check('体检：全绿时 verdict=healthy', healthy.summary.verdict === 'healthy
 check('体检：包含端口/依赖/链路/事件/审计各类检查', healthy.checks.length >= 12, String(healthy.checks.length))
 check('体检：通过项带 detail', healthy.checks.every((check) => typeof check.detail === 'string'))
 
-const brokenSnapshot = { ports: [{ name: 'control', port: 8799, listening: true, pid: 1, process: 'node.exe' }], processes: { napcatLoaders: [], qqClients: [], tts: [] }, botOnline: false }
+const brokenSnapshot = { ports: [{ name: 'control', port: 8880, listening: true, pid: 1, process: 'node.exe' }], processes: { qqClients: [], tts: [] }, botOnline: false }
 const broken = runDiagnose({ config, snapshot: brokenSnapshot, runtime: null, events: [], now, files: { exists: () => false } })
 check('体检：宿主未运行时 verdict=blocked', broken.summary.verdict === 'blocked' && broken.summary.blockers >= 1, JSON.stringify(broken.summary))
 check('体检：缺依赖项给出修复提示', broken.checks.find((check) => check.id === 'node')?.hint.includes('nodeExe') || true)
 check('体检：端口未监听给出操作建议', broken.checks.find((check) => check.id === 'port-host')?.hint.includes('启动宿主'))
-check('体检：机器人离线给出扫码建议', broken.checks.find((check) => check.id === 'bot-online')?.hint.includes('NapCat'))
+check('体检：机器人离线给出扫码建议', broken.checks.find((check) => check.id === 'bot-online')?.hint.includes('Waylay'))
 // v0.5.9 全面检测抓到的真 bug：`bot-online` 一直读 `snapshot.botOnline`，而插件从来没写过这个字段，
 // 于是明明连着也永远红。现在：插件写了该字段，且"未知"时回落到 6700 的 ESTABLISHED 连接数。
 {
@@ -252,8 +252,23 @@ server.close()
   check('面板引用的元素 id 都存在', missingIds.length === 0, missingIds.join(','))
 
   const serverSource = readFileSync(new URL('../control/lib/server.mjs', import.meta.url), 'utf8')
-  const uiRoutes = [...new Set([...script.matchAll(/['"`](\/api\/[a-z/]+)/g)].map((match) => match[1]))]
-  const missingRoutes = uiRoutes.filter((route) => !serverSource.includes(`'${route}'`))
+  /**
+   * ⚠️ 2026-10-31 修量具：原来这里是 `/['"`](\/api\/[a-z/]+)/`——**字符类里没有 `-`**，
+   * 于是 `/api/replay-diff` 被截成 `/api/replay`，而后者**确实存在**，检查因此常年白通过；
+   * 新加的 `/api/data-dir/open` 被截成 `/api/data`、不存在，才第一次红出来。
+   * 现在：① 字符类补 `-` 和 `_`；② 加一条"提取没有截断"的自检——
+   * 命中后面紧跟路径字符就是被截断了，宁可红也不许**看着像查过了**。
+   */
+  const uiRoutes = []
+  const truncatedRoutes = []
+  for (const match of script.matchAll(/['"`](\/api\/[a-z0-9/_-]*)/g)) {
+    const route = match[1]
+    const next = script[match.index + 1 + route.length] ?? ''
+    if (/[a-z0-9/_-]/.test(next)) truncatedRoutes.push(`${route}←${next}`)
+    uiRoutes.push(route)
+  }
+  check('路由提取没有被截断（正则必须认得 - 和 _）', truncatedRoutes.length === 0, truncatedRoutes.join(','))
+  const missingRoutes = [...new Set(uiRoutes)].filter((route) => !serverSource.includes(`'${route}'`))
   check('面板调用的接口都在服务端注册', missingRoutes.length === 0, missingRoutes.join(','))
   check('面板调用了调试接口（trace/diagnose/export）', ['/api/trace', '/api/diagnose', '/api/export'].every((route) => uiRoutes.includes(route)), uiRoutes.join(' '))
 
@@ -280,15 +295,34 @@ server.close()
     && sample({ ports: [], runtime: { ageSeconds: 3 }, config: { logs: { runtime: 'X.json' } } }).alive === true
     && sample({ ports: [], config: {} }).hint.includes('qq-runtime.json'),
     sample({ ports: [], config: {} }).label)
-  // issue #2 的现场：用户按报错里的 "shimFile" 去文件夹翻了五小时。这两件事必须在界面上说清。
-  check('★配置卡片说清「填 launcher.bat 而不是 napcat.bat」与「垫片/日志在工作目录里现写」',
-    ui.includes('bootmain\\launcher.bat') && ui.includes('qq-napcat-launch.cmd')
-    && ui.includes('不在插件安装包里') && ui.includes('placeholder="…\\NapCat\\bootmain\\launcher.bat"'),
+  // issue #2 的教训：报错里的名字必须能在界面上对上。v0.8.0 起是 Waylay：入口只有一个 bat，
+  // 日志与二维码都在入口同目录自动生成——卡片要把这两件事说清。
+  check('★配置卡片说清「Waylay 入口填 rin-waylay.bat（或所在目录）」与「日志/二维码同目录自动生成」',
+    ui.includes('rin-waylay.bat') && ui.includes('自动生成')
+    && ui.includes('placeholder="…\\_tmp\\rin-inject\\rin-waylay.bat"'),
     '配置卡片提示')
   /**
    * ★ 2026-10-16 真机事故（「启动完以后就是个页面没法进行任何互动」）：
    * 事件流必须**合并重绘**——把函数抠出来真跑一遍：连喂 1180 条只能触发 1 次重绘。
    */
+  /**
+   * ★「新加白名单好友的好像没有创建新对话」（2026-10-30 原话）。
+   * 桥只在收到消息时建会话，白名单只负责放行 ⇒ 面板必须把「已放行、还没说过话」显示出来，
+   * 否则白名单明明生效了也会被当成没生效。只断言字符串在不算是测分支，所以抠出函数真跑。
+   */
+  const pendingSource = /function pendingWhitelistKeys\(pending\) \{[\s\S]*?\n\}/.exec(script)?.[0] ?? ''
+  const pendingFn = pendingSource === '' ? null : new Function(`${pendingSource}; return pendingWhitelistKeys`)()
+  const pk = (value) => (pendingFn ? pendingFn(value) : { shown: [], total: 0 })
+  check('★待首次消息：面板有这一行', ui.includes('白名单已放行、还没说过话') && script.includes('pendingWhitelistKeys(runtime.whitelistPending)'))
+  check('★待首次消息：空/缺字段不报错', pendingFn !== null && pk(null).total === 0 && pk(undefined).shown.length === 0 && pk({}).total === 0)
+  check('★待首次消息：私聊带 u: 前缀、群带 g: 前缀',
+    JSON.stringify(pk({ users: [12340001], groups: [12340002] }).shown) === JSON.stringify(['u:12340001', 'g:12340002']),
+    JSON.stringify(pk({ users: [12340001], groups: [12340002] })))
+  check('★待首次消息：超过 24 个截断但总数仍是真的', (() => {
+    const many = pk({ users: Array.from({ length: 30 }, (_, i) => i + 1) })
+    return many.shown.length === 24 && many.total === 30
+  })(), JSON.stringify(pk({ users: Array.from({ length: 30 }, (_, i) => i + 1) })).slice(0, 80))
+  check('★待首次消息：坏数据（非数组）当空处理', pk({ users: 'u:1', groups: null }).total === 0)
   const scheduleSource = /function scheduleStreamRender\(\) \{[\s\S]*?\n\}/.exec(script)?.[0] ?? ''
   check('★事件流用 scheduleStreamRender 合并重绘（onmessage 里不再直接 renderStream）',
     scheduleSource !== '' && script.includes('scheduleStreamRender()') && script.includes('const STREAM_RENDER_MS = 250')

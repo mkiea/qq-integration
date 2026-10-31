@@ -1,0 +1,23 @@
+# 运行产物：一条都不许提交。
+#
+# 这些文件里是**消息原文、QQ 号、会话映射、追踪日志、下载的图片、控制台的 token**，
+# 全部以 `qq-` 开头（见 test/privacy-unit.mjs 的 RUNTIME_ARTIFACTS）。
+#
+# 用根锚定 `/qq-*`，不要写成 `qq-*`：后者是 git 的 basename 语义，会连
+# `control/bin/qq-control.mjs`（源文件）一起算成"已忽略"——那会让隐私守卫
+# 的判定变成误打误撞。
+/qq-*
+
+# writeJsonAtomic 写一半崩掉会留下隐藏临时文件（`.m1a2b3-x9y8z7.tmp`），
+# 里面是完整的 JSON，同样含 QQ 号。
+.*.tmp
+
+# 依赖：装完 `npm install` 会生成，体积大且可由 package.json 复现。
+# 不忽略的话一次手滑 `git add -A` 就把几十 MB 的第三方代码推上去。
+/node_modules/
+
+# 本机配置（机器相关的绝对路径、端口、账号）与密钥：这些**永远**不进版本库。
+# `qq-control.json` 里可能写着 waylayUin（QQ 号）和 TTS/STT 的 key。
+/qq-control.json
+.env
+.env.*

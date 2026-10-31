@@ -1,9 +1,17 @@
 {
-  "name": "dsh-qq-rin",
+  "name": "dsh-qq-onebot-bridge",
   "version": "0.1.0",
-  "description": "凛的 QQ 桥（OneBot v11 反向 WebSocket）。自 dsh-qq-onebot-bridge 衍生的自有插件：去掉了群小游戏/播报/订阅等无关功能，NapCat 相关代码做了精简。",
+  "description": "QQ 集成接入（qq-integration）：把 OneBot v11 实现（内置 Waylay 拉起）接到 DSH agent 的双向桥插件，控制台为独立进程（127.0.0.1:8880）",
   "type": "module",
   "main": "lib/index.js",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/mkiea/qq-integration.git"
+  },
+  "homepage": "https://github.com/mkiea/qq-integration#readme",
+  "bugs": {
+    "url": "https://github.com/mkiea/qq-integration/issues"
+  },
   "bin": {
     "qq-control": "./control/bin/qq-control.mjs"
   },
@@ -25,7 +33,11 @@
     "test",
     "docs",
     "cordis.patch.yml",
-    "README.md"
+    "README.md",
+    "README.en.md",
+    "CHANGELOG.md",
+    "NOTICE.md",
+    "LICENSE"
   ],
   "keywords": [
     "dsh",
@@ -34,7 +46,17 @@
     "qq",
     "onebot",
     "onebot-v11",
-    "bridge"
+    "waylay",
+    "napcat",
+    "integration",
+    "bridge",
+    "speech-to-text",
+    "asr",
+    "debuggable",
+    "tracing",
+    "replay",
+    "observability",
+    "control-console"
   ],
   "dsh": {
     "bundle": {
@@ -64,6 +86,5 @@
     "@deepseek-ai/dsh-tools": "^0.1.0-rc.6 || ^0.1.1-rc.2 || ^0.1.2-rc.1 || ^0.1.5-rc.1 || ^0.2.0-rc.2",
     "@deepseek-ai/schemastery": "^3.18.1"
   },
-  "license": "MIT",
-  "author": "someone"
+  "license": "MIT"
 }

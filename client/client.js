@@ -33,7 +33,7 @@ window.__ModuleLoader__.load({
      * 浏览器只在**页面加载时**取一次 bundle，没法热替换，所以只能刷新一次页面。
      * 与其让用户对着没变化的界面猜，不如自己认出来并给一个「刷新页面」按钮（见下面的 qqai-stale 横幅）。
      */
-    const CLIENT_VERSION = '0.7.23'
+    const CLIENT_VERSION = '0.1.0'
 
     const CSS = `
 .qqai-wrap{display:flex;flex-direction:column;gap:14px;font-size:13px;color:var(--dsw-alias-label-primary,#111)}
@@ -822,75 +822,107 @@ window.__ModuleLoader__.load({
     }
 
     /**
-     * 快捷操作：**启动 NapCat** / **重新登录**。
+     * 快捷操作：**启动 Waylay** / **停止** / **刷新二维码**。
      *
-     * 为什么要有（用户 2026-10-04："不能自己快捷启动吗？比如加到哪个控制选项中"）：
-     * 以前只能让用户自己去右键"以管理员身份运行 launcher.bat"，而这台机器上双击自提权是**静默失败**的。
-     * 现在点一下就行——代价是弹一次 UAC，点「是」即可。
+     * ★ 2026-10-30：后端从 NapCat 换成 Waylay（注入进 QQ.exe，没有独立进程）。
+     * 三条与前版**性质不同**的事，决定这里的按钮不能只换文案：
+     *   ① 「停止」物理上就是**关掉那个被注入的 QQ** ⇒ 机器人账号会下线，属于危险操作，要单独说清；
+     *   ② 启动后**不会弹 QQ 窗口**（注入器把 QQ 的 main 换掉了）——用户等窗口出现会以为失败了；
+     *   ③ 端口在听 ≠ 能收发（实测过：被顶号后端口一直在听、`logged_in` 仍为 false，发消息返回 1006501）
+     *      ⇒ 状态行必须把这两件事分开讲，不能只说"运行中"。
      *
-     * 这两条会 POST 到宿主的 `/qqai/napcat/start` 与 `/qqai/napcat/relogin`；
-     * 服务端只按**加载器 PID** 清理，绝不会按镜像名杀 QQ（那会连用户自己的 QQ 一起杀掉）。
+     * 这三条 POST 到宿主的 `/qqai/waylay/{start,stop}`；服务端只按**监听 13000 的 PID** 定位，
+     * 核对进程名必须是 QQ 系，绝不按镜像名杀（那会连用户自己的 QQ 一起杀）。
      */
-    function Actions({ napcat, busy, onAction, qrStamp, onRefreshQr }) {
-      const running = napcat?.running === true
-      const port = napcat?.port ?? 6099
-      const qr = napcat?.qr ?? {}
+    function Actions({ waylay, busy, onAction, qrStamp, onRefreshQr }) {
+      const listening = waylay?.listening === true
+      const loggedIn = waylay?.loggedIn
+      const port = waylay?.port ?? 13000
+      const qr = waylay?.qr ?? {}
       // busy 没传 / 不是字符串时都按"没有请求在跑"处理（曾经把 undefined 当成"忙"，按钮一直灰着）。
       const pending = typeof busy === 'string' && busy !== ''
-      const starting = busy === '/qqai/napcat/start' || busy === '/qqai/napcat/relogin'
+      const starting = busy === '/qqai/waylay/start'
+      const stopping = busy === '/qqai/waylay/stop'
       /**
-       * 按钮旁边那句状态（用户 2026-10-04："应该在启动旁边加个提示，比如过会会出现二维码，
-       * 而不是什么也没有"）——把"接下来会发生什么"直接写出来，别让用户对着空白猜。
+       * 状态行**直接用服务端那句话**（`waylay.text`）：它已经把「端口在听」与「会话就绪」分开写了，
+       * 前端再拼一遍只会让两边口径不一致——以后改口径就得改两处。
        */
       const status = starting
-        ? '正在启动 NapCat…等几秒，二维码会出现在下面'
-        : running === true
-          ? `NapCat：运行中（127.0.0.1:${port}）${qr.fresh === true ? ` · 二维码 ${qr.ageSeconds} 秒前刷新` : ''}`
-          : 'NapCat：未运行 · 点「启动 NapCat」后等几秒，二维码会出现在下面'
+        ? '正在启动 Waylay…注入进 QQ 不会弹窗口，等 13000 起来即可'
+        : stopping
+          ? '正在停止…会关掉那个被注入的 QQ'
+          : (typeof waylay?.text === 'string' && waylay.text !== '')
+            ? waylay.text
+            : '读不到 Waylay 状态（宿主可能刚重载）——点「刷新」再看一次'
       return h('div', { className: 'qqai-actions' },
-        h('div', { className: 'qqai-meta' }, '快捷操作'),
+        h('div', { className: 'qqai-meta' }, `快捷操作 · 后端 = Waylay（127.0.0.1:${port}）`),
         h('div', { className: 'qqai-action-row' },
           h('button', {
             className: 'qqai-action',
-            disabled: running === true || pending,
-            title: running === true ? 'NapCat 已经在运行了' : '以管理员身份启动 NapCat（本机策略下不会弹 UAC，命令直接执行）',
-            onClick: () => onAction('/qqai/napcat/start', '启动 NapCat'),
-          }, running === true ? 'NapCat 运行中' : (busy === '/qqai/napcat/start' ? '请求中…' : '启动 NapCat')),
+            disabled: listening === true || pending,
+            title: listening === true
+              ? `Waylay 已经在运行了（${port} 在听）`
+              : '执行 _tmp\\rin-inject\\rin-waylay.bat（注入进 QQ，不会弹 QQ 窗口）',
+            onClick: () => onAction('/qqai/waylay/start', '启动 Waylay'),
+          }, listening === true ? 'Waylay 运行中' : (starting ? '请求中…' : '启动 Waylay')),
+          h('button', {
+            className: 'qqai-action',
+            disabled: listening !== true || pending,
+            title: listening === true
+              ? `只结束监听 ${port} 的那个 QQ（会话因此下线）；你自己另开的 QQ 不会被碰`
+              : 'Waylay 没在运行，无需停止',
+            onClick: () => {
+              // 这一步是不可逆的（机器人账号直接下线），所以先问一句。
+              const yes = typeof window === 'undefined' || typeof window.confirm !== 'function'
+                ? true
+                : window.confirm(`确定要停止 Waylay？\n这会结束监听 ${port} 的那个 QQ —— 机器人账号会当场下线，\n你自己另外开的 QQ 不受影响。`)
+              if (yes) onAction('/qqai/waylay/stop', '停止 Waylay')
+            },
+          }, stopping ? '请求中…' : '停止（关掉那个 QQ）'),
+          h('span', { className: 'qqai-hint' }, status)),
+        /**
+         * 「选择数据根目录…」（2026-10-31）：弹系统选文件夹窗口，选完**直接写进配置**——
+         * 一个动作完成，不用再点保存。为什么放在快捷操作而不是那一行的行内：面板的行渲染是通用的
+         * （一行一个控件），行内再塞按钮要改渲染器；而选目录是"一次性设定"，不是要反复微调的旋钮。
+         */
+        h('div', { className: 'qqai-action-row' },
           h('button', {
             className: 'qqai-action',
             disabled: pending,
-            title: '只结束 NapCat 加载器（不会碰你自己开的 QQ），然后重新走一遍登录流程',
-            onClick: () => onAction('/qqai/napcat/relogin', '重新登录'),
-          }, busy === '/qqai/napcat/relogin' ? '请求中…' : '重新登录（扫码）'),
-          h('span', { className: 'qqai-hint' }, status)),
+            title: '弹出一个选文件夹的窗口；选完直接写进配置。⚠️ 换目录不会自动搬旧数据。',
+            onClick: () => onAction('/qqai/data-dir/pick', '选择数据根目录'),
+          }, '选择数据根目录…')),
+        // 「已登录就报账号」——`loggedIn` 与 `listening` 是两个字段，端口在听不代表已登录。
+        loggedIn === true && waylay.uin
+          ? h('div', { className: 'qqai-hint' }, `当前登录：QQ ${waylay.uin}${waylay.nickname ? `（${waylay.nickname}）` : ''}`)
+          : null,
         /**
          * **把二维码直接贴在这里**（用户 2026-10-04 连着两次："没弹出二维码啊"）。
-         * NapCat 的码本来只印在它自己的控制台窗口里，而我们把输出重定向进日志了 ⇒ 窗口是空的、看不到码。
-         * 现在只要 `cache/qrcode.png` 还新鲜（≤5 分钟），面板就把图显示出来，点「刷新二维码」重新取一张。
+         * Waylay 的码写在入口同目录的 `qrcode.png`，超过 5 分钟就算过期、自动隐藏。
          */
         qr.fresh === true
           ? h('div', { className: 'qqai-qr' },
             h('img', {
               className: 'qqai-qr-img',
               src: `${qr.url}?t=${qrStamp}`,
-              alt: 'NapCat 登录二维码',
+              alt: 'Waylay 登录二维码',
               width: 176,
               height: 176,
             }),
             h('div', { className: 'qqai-qr-side' },
               h('div', { className: 'qqai-qr-title' }, '用手机 QQ 扫码登录'),
-              h('div', { className: 'qqai-hint' }, '二维码由 NapCat 生成在 cache/qrcode.png；超过 5 分钟会自动隐藏。'),
+              h('div', { className: 'qqai-hint' }, '二维码是 Waylay 生成在 qrcode.png 的；超过 5 分钟会自动隐藏。'),
               h('button', {
                 className: 'qqai-action',
                 disabled: pending,
-                title: '重新拉取这张二维码图（NapCat 会自己刷新码）',
+                title: '重新拉取这张二维码图',
                 onClick: () => (typeof onRefreshQr === 'function' ? onRefreshQr() : undefined),
               }, '刷新二维码')))
-          // 运行中但**码已过期**：不能什么都不显示——那看起来就像"没有二维码"（用户已经问过一次了）。
-          : (running === true
+          // 运行中但**码已过期 / 没有码**：不能什么都不显示——那看起来就像"没有二维码"。
+          : (listening === true && loggedIn !== true
             ? h('div', { className: 'qqai-hint' }, qr.ageSeconds >= 0
-              ? `二维码已过期（${qr.ageSeconds} 秒前刷新的那张，超过 5 分钟就不显示了）——点上面「重新登录（扫码）」重新生成`
-              : '还没有二维码——点上面「启动 NapCat」，或直接点「重新登录（扫码）」')
+              ? `二维码已过期（${qr.ageSeconds} 秒前刷新的那张，超过 5 分钟就不显示了）——点「停止」再「启动」重新走一遍登录`
+              : '还没有二维码——Waylay 只在快登失败时才写码。先点「启动 Waylay」，登录态没就绪时会自动出码。')
             : null))
     }
 
@@ -1177,8 +1209,8 @@ window.__ModuleLoader__.load({
       }, [state.data])
 
       /**
-       * 盯着二维码：启动/重启之后，NapCat 要过几秒才把码写进 `cache/qrcode.png`。
-       * 这里每 3 秒拉一次面板，**图一出现就停**（并在下面把它显示出来）；
+       * 盯着二维码：启动之后，Waylay 要过几秒才把码写进 `qrcode.png`。
+       * 这里每 3 秒拉一次面板，**图一出现就停**（并在上面把它显示出来）；
        * 90 秒还没等到就停下并给一句人话，免得用户对着"什么都没有"发呆。
        */
       useEffect(() => {
@@ -1186,13 +1218,13 @@ window.__ModuleLoader__.load({
         const timer = setInterval(() => { void load() }, 3000)
         const giveUp = setTimeout(() => {
           setState((prev) => (prev.watchingQr === true
-            ? { ...prev, watchingQr: false, flash: '还没看到二维码：点「QQ助手账号」看看扫码页，或再点一次「启动 NapCat」' }
+            ? { ...prev, watchingQr: false, flash: '还没看到二维码：Waylay 只在快登失败时才写码——若已经自动登录成功，就不用扫' }
             : prev))
         }, 90_000)
         return () => { clearInterval(timer); clearTimeout(giveUp) }
       }, [state.watchingQr, load])
       useEffect(() => {
-        if (state.watchingQr === true && state.data?.napcat?.qr?.fresh === true) {
+        if (state.watchingQr === true && state.data?.waylay?.qr?.fresh === true) {
           setState((prev) => ({ ...prev, watchingQr: false, flash: '二维码已经出来了，用手机 QQ 扫下面那张即可' }))
         }
       }, [state.data, state.watchingQr])
@@ -1244,16 +1276,16 @@ window.__ModuleLoader__.load({
             disabled: state.busyKey !== '' || state.refreshing === true || state.cooling === true,
             title: '重新从宿主拉一次面板数据（会显示拉到了几组几行、宿主是哪一版）',
           }, state.refreshing === true ? '刷新中…' : '刷新')),
-        // 顶部第一块是「快捷操作」（启动 NapCat / 重新登录）——用户 2026-10-04："把快捷操作拉到相关链接上边"。
+        // 顶部第一块是「快捷操作」（启动 Waylay / 停止 / 刷新二维码）——用户 2026-10-04："把快捷操作拉到相关链接上边"。
         // 理由也顺：没起来的时候，"把它启动起来"比"点开账号页"更该先看到。
         h(Actions, {
-          napcat: data.napcat,
+          waylay: data.waylay,
           busy: state.busyAction,
           onAction: runAction,
           qrStamp: state.qrStamp,
           onRefreshQr: () => {
             // ⚠️ 这里**必须**用函数式更新（`(prev) => ({...prev, ...})`）：整对象替换会把 `data` 一起清掉，
-            //    下一帧 `data.napcat` 取不到 → React 渲染直接抛错 → **整页白屏**（真机踩过）。
+            //    下一帧 `data.waylay` 取不到 → React 渲染直接抛错 → **整页白屏**（真机踩过）。
             setState((prev) => ({ ...prev, qrStamp: Date.now() }))
             void load()
           },

@@ -21,7 +21,7 @@ import { diffReplays } from './replaydiff.mjs'
 
 const MAX_BODY_BYTES = 64 * 1024
 const LOG_NAMES = ['hostOut', 'hostErr', 'bridge', 'trace', 'audit', 'runtime']
-const CONFIG_KEYS = ['cwd', 'dshBin', 'nodeExe', 'napcatBat', 'ttsBat']
+const CONFIG_KEYS = ['cwd', 'dshBin', 'nodeExe', 'waylayBat', 'waylayUin', 'ttsBat']
 
 export function createToken() {
   return randomBytes(18).toString('base64url')
@@ -77,7 +77,18 @@ export function originAllowed(origin, port) {
  * @param ui      HTML served at "/"
  * @param uiFile  界面文件路径：给了就按 mtime 热重载（见 currentUi）
  */
-export function createControlServer({ config, token, api, ui = '', uiFile = '', saveConfig = null, logger = console }) {
+/**
+ * 只拿到**请求处理函数**，不监听端口。
+ *
+ * ★ 2026-10-30「进程统一成一个」：控制台原来必须是独立进程（`bin/qq-control.mjs`），
+ * 于是"小鲸鱼控制台"和"宿主"变成两个 node、两套地址、两个入口。现在宿主可以把这个
+ * 处理函数直接挂在 `/qqai/console` 下——同一个进程、同一个地址，浏览器里只有一个页面。
+ *
+ * 抽出来的方式刻意最省事：`createServer` 只是把这个函数登记成 `request` 监听器，
+ * 所以这里把同一段逻辑单独返回，`createControlServer` 仍然原样包一层。
+ * 这样两条路（独立跑 / 挂在宿主里）**走的是同一份代码**，不会各修一份、慢慢分叉。
+ */
+export function createControlHandler({ config, token, api, ui = '', uiFile = '', saveConfig = null, logger = console }) {
   const port = config.ports?.control ?? 8799
 
   /**
@@ -99,7 +110,7 @@ export function createControlServer({ config, token, api, ui = '', uiFile = '', 
     return uiSnapshot.html
   }
 
-  return createServer(async (request, response) => {
+  return async (request, response) => {
     const url = new URL(request.url ?? '/', `http://127.0.0.1:${port}`)
     const path = url.pathname
 
@@ -220,15 +231,13 @@ export function createControlServer({ config, token, api, ui = '', uiFile = '', 
         json(response, 200, await api.qr())
         return
       }
-      // NapCat WebUI 的带 token 地址：避免「QQ助手账号」点进去只看到「token 无效」
-      // （NapCat 的 WebUI 有自己的 token，存在 bootmain/config/webui.json）。
-      if (request.method === 'GET' && path === '/api/napcat/webui') {
-        if (typeof api.napcatWebui !== 'function') {
-          json(response, 200, { ok: false, url: '', reason: '当前控制台不支持该接口' })
+      // v0.8.0：NapCat WebUI 入口（/api/napcat/webui）已随 NapCat 退场——Waylay 的 13000 是裸 HTTP，不用拼 token。
+      if (request.method === 'GET' && path === '/api/waylay') {
+        if (typeof api.waylayStatus !== 'function') {
+          json(response, 200, { ok: false, reason: '当前控制台不支持该接口' })
           return
         }
-        const result = await api.napcatWebui()
-        json(response, 200, { ok: result.ok === true, url: String(result.url ?? ''), reason: String(result.reason ?? '') })
+        json(response, 200, { ok: true, ...(await api.waylayStatus()) })
         return
       }
       if (request.method === 'GET' && path === '/api/diagnose') {
@@ -295,25 +304,55 @@ export function createControlServer({ config, token, api, ui = '', uiFile = '', 
           json(response, 400, { ok: false, reason: '请求体不是合法 JSON 或过大' })
           return
         }
+        /**
+         * ★ 2026-10-30：控制台现在可以**挂在宿主进程里**（`/qqai/console`）。
+         * 那样"停宿主 / 重启宿主"就是"停自己"——`supervisor` 会回 `self:true`，
+         * 这里负责**先把响应发出去**再退出，否则浏览器只看到连接被重置，
+         * 用户不知道到底成没成功。重启那条会先派一个后台任务等端口释放再拉起。
+         */
+        const exitAfterReply = (why) => {
+          const leave = () => {
+            logger?.info?.(`control: ${why}，进程退出`)
+            process.exit(0)
+          }
+          if (response.writableFinished) setTimeout(leave, 60)
+          else response.once('finish', () => setTimeout(leave, 160))
+        }
         const actions = {
           '/api/host/start': () => api.startHost(),
-          '/api/host/stop': () => api.stopHost(),
+          '/api/host/stop': async () => {
+            const result = await api.stopHost()
+            if (result?.self === true && result.ok === true) exitAfterReply('宿主停止（自己就是宿主）')
+            return result
+          },
           '/api/host/restart': async () => {
-            const stopped = await api.stopHost()
-            await new Promise((resolve) => setTimeout(resolve, 1500))
-            const started = await api.startHost()
-            return { ok: started.ok, reason: `${stopped.ok || !stopped.ok ? stopped.reason : ''}；${started.reason}`.replace(/^；/, '') }
+            if (typeof api.restartHost !== 'function') return { ok: false, reason: '当前控制台不支持重启宿主' }
+            const result = await api.restartHost()
+            if (result?.self === true && result.ok === true) exitAfterReply('宿主重启（自己就是宿主，已派后台任务）')
+            return result
           },
-          '/api/napcat/start': () => api.startNapcat(),
-          // 重启登录流程：会先结束 NapCat 加载器与它注入的 QQ（护栏在 supervisor 里）
-          '/api/napcat/restart': () => {
-            if (typeof api.restartNapcatLogin !== 'function') return { ok: false, reason: '当前控制台不支持重启登录流程' }
-            return api.restartNapcatLogin()
+          // Waylay：v0.8.0 起唯一的后端。停止 = 结束那个监听 13000 的 QQ（判据在 lib/waylay-launch.js）
+          '/api/waylay/start': () => {
+            if (typeof api.startWaylay !== 'function') return { ok: false, reason: '当前控制台不支持该接口' }
+            return api.startWaylay()
           },
-          '/api/napcat/stop': () => api.stopNapcat(),
+          '/api/waylay/stop': () => {
+            if (typeof api.stopWaylay !== 'function') return { ok: false, reason: '当前控制台不支持该接口' }
+            return api.stopWaylay()
+          },
+          // 让 Waylay 主动重新出一张登录码（旧按钮只是重读同一个文件，用户实测「不管用」）
+          '/api/qr/refresh': () => {
+            if (typeof api.refreshQr !== 'function') return { ok: false, reason: '当前控制台不支持该接口' }
+            return api.refreshQr()
+          },
           '/api/tts/start': () => api.startTts(),
           '/api/tts/stop': () => api.stopTts(),
           '/api/all/stop': () => api.stopAll(),
+          // 总控页的一键启动（Waylay → 宿主 → 可选 TTS，单项失败不中断）
+          '/api/all/start': () => {
+            if (typeof api.startAll !== 'function') return { ok: false, reason: '当前控制台不支持该接口' }
+            return api.startAll()
+          },
           // 释放端口：只允许释放**受管端口**（FREEABLE_PORTS）。否则 token 持有者能借它
           // 杀掉任意占用者的进程（审查复现过 {"name":"control"} → 杀掉别的 8799 占用者）。
           '/api/port/free': () => {
@@ -369,6 +408,34 @@ export function createControlServer({ config, token, api, ui = '', uiFile = '', 
             if (typeof api.clearQueue !== 'function') return { ok: false, reason: '当前控制台不支持清空队列' }
             return api.clearQueue()
           },
+          /**
+           * 「打开数据根目录」：控制台不自己拼路径，全部交给 supervisor（它才知道
+           * 快照里那个**生效**的 dataDir）。这里只转发并原样回报，避免两处算法不一致。
+           */
+          '/api/data-dir/open': () => {
+            if (typeof api.openDataDir !== 'function') return { ok: false, reason: '当前控制台不支持打开数据目录' }
+            return api.openDataDir()
+          },
+          /**
+           * 「浏览…」：弹系统选文件夹窗口，只返回路径、**不写配置**。
+           * 向导里那个输入框要让人先看一眼（选错目录的代价是把记忆接到别处）。
+           */
+          '/api/data-dir/browse': () => {
+            if (typeof api.browseDataDir !== 'function') return { ok: false, reason: '当前控制台不支持浏览目录' }
+            return api.browseDataDir()
+          },
+          /**
+           * 「就用这个目录」：把 dataDir 写进 **profile 的 cordis.patch.yml**（向导的落地动作）。
+           * 校验与写盘都在 supervisor 里（复用 `lib/panel.js` 的规则），这里只做形状检查——
+           * 前端传什么就写什么是最容易出的事故：少一个 `path` 字段会把配置写成空串。
+           */
+          '/api/data-dir/set': () => {
+            if (typeof api.setDataDir !== 'function') return { ok: false, reason: '当前控制台不支持设置数据根目录' }
+            if (typeof body.path !== 'string') {
+              return { ok: false, reason: `请求里缺少 path（收到 ${JSON.stringify(body?.path ?? null)}）；要清空请显式传空串` }
+            }
+            return api.setDataDir(body.path)
+          },
           '/api/config': () => {
             if (typeof saveConfig !== 'function') return { ok: false, reason: '配置保存不可用' }
             const patch = {}
@@ -399,7 +466,15 @@ export function createControlServer({ config, token, api, ui = '', uiFile = '', 
       logger?.error?.(`control api ${path} failed: ${error.message}`)
       json(response, 500, { ok: false, reason: `内部错误：${error.message}` })
     }
-  })
+  }
+}
+
+/**
+ * 独立跑的那条路（`bin/qq-control.mjs`）：把同一份处理函数包成一个 http.Server。
+ * 与"挂在宿主里"共用 `createControlHandler`，行为一致。
+ */
+export function createControlServer(options) {
+  return createServer(createControlHandler(options))
 }
 
 /** Read the UI file (kept separate so the server stays testable without it). */

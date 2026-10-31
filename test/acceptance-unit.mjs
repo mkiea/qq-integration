@@ -240,7 +240,9 @@ check('面板包含验收台卡片', ui.includes('硬约束验收台'))
 for (const id of ['acceptance', 'acceptMeta']) {
   if (!ui.includes(`id="${id}"`)) die(`面板缺少元素 #${id}`)
 }
-const script = /<script>([\s\S]*)<\/script>/.exec(ui)?.[1] ?? ''
+// 量具修复（v0.1.0）：ui.html 有两个 <script> 块，旧的贪婪正则把中间的 HTML 拼进来必然解析失败——
+// 改成逐块抓取再拼接（解析 = 每块都必须合法；函数存在性 = 在拼接文本上查，兼容老断言）。
+const script = [...ui.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]).join('\n;\n')
 check('面板脚本可解析', (() => { try { new Function(script); return true } catch { return false } })())
 for (const fn of ['loadAcceptance', 'renderAcceptance', 'focusCard']) {
   if (!new RegExp(`(async )?function ${fn}\\(`).test(script)) die(`面板缺少函数 ${fn}`)

@@ -30,11 +30,20 @@ const wantsPrint = process.argv.includes('--print-config')
 const portOverride = Number(argOf('port', '0'))
 
 const { config } = loadControlConfig(configFile)
+/**
+ * ★ `--port` 只是**本次运行**的临时覆盖，绝不写回配置文件。
+ * 2026-10-30 事故：为了测试用 `--port 18881` 起了一次，CLI 把覆盖值存进了
+ * qq-control.json；之后桌面启动器照旧打开 8880 ⇒ 页面 ERR_CONNECTION_REFUSED，
+ * 排查半天才发现是「一次性参数被持久化」。
+ */
+const diskControlPort = config.ports.control
 if (Number.isInteger(portOverride) && portOverride > 0) config.ports.control = portOverride
 
 // 控制台 token 持久化：同一个文件里保存，避免每次都要从日志里找 URL。
 config.token = config.token || createToken()
-saveControlConfig(configFile, config)
+// 落盘一律用「文件里的端口」，不是这次的覆盖值
+const persist = () => saveControlConfig(configFile, { ...config, ports: { ...config.ports, control: diskControlPort } })
+persist()
 
 if (wantsPrint) {
   console.log(JSON.stringify(config, null, 2))
@@ -51,7 +60,8 @@ const server = createControlServer({
   saveConfig: (patch) => {
     Object.assign(config, patch)
     if (patch.ports) config.ports = { ...config.ports, ...patch.ports }
-    return saveControlConfig(configFile, config)
+    // 同样不把 --port 覆盖写回（面板只保存路径类配置，不会带端口）
+    return persist()
   },
 })
 
@@ -66,7 +76,7 @@ server.on('error', (error) => {
 
 server.listen(config.ports.control, '127.0.0.1', () => {
   const url = `http://127.0.0.1:${config.ports.control}/?token=${config.token}`
-  console.log('🐋 小鲸鱼控制台已启动')
+  console.log('🐧 QQ 集成接入 · 控制台已启动')
   console.log(`   控制台：${url}`)
   console.log(`   配置文件：${configFile}`)
   console.log(`   受管端口：${Object.entries(config.ports).map(([name, port]) => `${PORT_LABELS[name] ?? name}=${port}`).join('  ')}`)

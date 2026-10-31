@@ -1280,5 +1280,42 @@ function makeBridge(overrides = {}) {
   t.stop()
 }
 
+// ---------------------------------------------------------------------------
+// L. 模型自检（`!model`）与研究归因（trace stage=model）
+//
+// 本地模型接通之后，"这段对话是哪个模型生成的"必须能从事件流里读出来——
+// 否则研究数据无法归因，只能靠猜。这里钉两件事：自检本身零成本（不建会话、
+// 不发请求），以及事件里的 provider/model/overridden 三个字段
+// （overridden=false 表示跟随宿主默认；这两件事在排查时结论完全相反）。
+// ---------------------------------------------------------------------------
+{
+  const t = makeBridge({ adminUsers: [1001] })
+  const out = await t.send(t.message('!model', { messageType: 'private', userId: 1001, groupId: undefined }))
+  check('L1 !model 报出实际生效的 provider/model', out.includes('test / test'), brief(out))
+  check('L2 没配 provider/model 时说清"跟随宿主默认"', out.includes('跟随宿主默认'), brief(out))
+  // 零成本是它的卖点：一次自检不该顺手建一个会话出来。
+  check('L3 !model 不建会话（trace 里没有 model 事件）', t.traceStage('model').length === 0,
+    `${t.traceStage('model').length} 条`)
+  await t.send(t.message('你好'))   // 这条才会建会话
+  const ev = t.traceStage('model')
+  check('L4 建会话时留下 stage=model 事件（研究归因锚点）',
+    ev.length >= 1 && t.reasonsOf(ev).includes('test'), `${ev.length} 条：${brief(t.reasonsOf(ev))}`)
+  check('L5 model 事件带 provider/model/overridden 三个字段',
+    ev[0]?.data?.provider === 'test' && ev[0]?.data?.model === 'test' && ev[0]?.data?.overridden === false,
+    brief(ev[0]?.data))
+  t.stop()
+}
+{
+  // 插件覆盖：QQ 单独走本地模型、桌面端仍走云端（研究隔离的关键路径）
+  const t = makeBridge({ adminUsers: [1001], provider: 'ollama', model: 'qwen2.5:7b' })
+  const out = await t.send(t.message('!model', { messageType: 'private', userId: 1001, groupId: undefined }))
+  check('L6 插件配置覆盖时报"插件配置覆盖"并给出路由名',
+    out.includes('ollama / qwen2.5:7b') && out.includes('覆盖'), brief(out))
+  await t.send(t.message('你好'))
+  const ev = t.traceStage('model')
+  check('L7 覆盖路径的 data.overridden = true', ev[0]?.data?.overridden === true, brief(ev[0]?.data))
+  t.stop()
+}
+
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exit(failed > 0 ? 1 : 0)

@@ -3,128 +3,208 @@
 <head>
 <meta charset="utf-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
-<title>小鲸鱼控制台</title>
+<title>QQ 集成接入 · 控制台</title>
 <style>
+  /* ── 设计语言：Claude 风（暖白底 / 陶土色强调 / 细边框圆角卡片 / 衬线标题）──
+     2026-10-30 重排：16 张卡片压成 6 组（总控/概览/实时/诊断/数据/登录）+ 左侧导航，
+     导航点一下 = 切到那一页（独立页面模式），不再是单页长滚动。所有元素 id 未动。 */
   :root {
-    --bg:#0f1720; --panel:#17222e; --panel2:#1b2733; --line:#243447; --line2:#1e2b3a;
-    --fg:#e6edf3; --dim:#8aa0b4; --ok:#3fb950; --warn:#d29922; --bad:#f85149; --accent:#4a9eff;
+    --bg:#faf9f5; --panel:#ffffff; --panel2:#f3f1ea; --line:#e7e4da; --line2:#efede5;
+    --fg:#22211f; --dim:#75716a; --ok:#3e7a52; --warn:#a9772a; --bad:#b3453a;
+    --accent:#c05e3c; --accent-ink:#ffffff; --accent-soft:#f6ebe4; --hover:#f7f6f0; --code:#f5f3ec;
+    --serif:Georgia,"Times New Roman",serif; --sans:"Segoe UI",system-ui,"Microsoft YaHei",sans-serif;
   }
-  * { box-sizing: border-box; }
-  /* overflow-wrap：面板里塞满了 C:\...\dsh-qq-onebot-bridge\qq-runtime.json 这种
-     没有空格的长路径。窄窗口下它们不会换行，会把整张卡片顶出屏幕（右侧直接被裁掉）。 */
-  body { margin:0; font:13.5px/1.55 "Microsoft YaHei",system-ui,sans-serif; background:var(--bg); color:var(--fg); overflow-wrap:break-word; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#262624; --panel:#30302d; --panel2:#262624; --line:#413f39; --line2:#37352f;
+      --fg:#f0eee6; --dim:#a6a296; --ok:#83bd93; --warn:#d8b26a; --bad:#e08b80;
+      --accent:#e08d6b; --accent-ink:#2a1a12; --accent-soft:#4a332a; --hover:#3a3833; --code:#262624; }
+  }
+  * { box-sizing:border-box; }
+  body { margin:0; font:13.5px/1.6 var(--sans); background:var(--bg); color:var(--fg); overflow-wrap:break-word; }
 
-  /* ── 顶栏：状态一眼可读，操作放右边 ────────────────────── */
-  header { display:flex; align-items:center; gap:8px; padding:9px 16px; border-bottom:1px solid var(--line); background:var(--panel); position:sticky; top:0; z-index:5; flex-wrap:wrap; }
-  header h1 { font-size:15px; margin:0 8px 0 0; font-weight:600; letter-spacing:.3px; }
-  header .spacer { flex:1; }
-  /* pill 之前是实心绿底，三个一起太吵；改成「小圆点 + 文字 + 描边」，颜色只在异常时发亮 */
-  .pill { display:inline-flex; align-items:center; gap:6px; padding:3px 10px; border-radius:999px; font-size:12px; border:1px solid var(--line); color:var(--dim); white-space:nowrap; background:transparent; }
+  /* ── 布局：左栏（品牌 / 状态 / 导航 / 操作）+ 右侧内容 ── */
+  .app { display:flex; align-items:stretch; min-height:100vh; }
+  .side { width:252px; flex:0 0 252px; position:sticky; top:0; height:100vh; overflow:auto;
+    display:flex; flex-direction:column; gap:14px; padding:18px 14px;
+    background:var(--panel2); border-right:1px solid var(--line); }
+  @media (max-width:900px) {
+    .app { display:block; }
+    .side { position:static; width:auto; height:auto; border-right:0; border-bottom:1px solid var(--line); }
+  }
+  .brand { display:flex; align-items:center; gap:10px; }
+  .brand .logo { width:34px; height:34px; border-radius:10px; background:var(--accent); color:var(--accent-ink);
+    display:flex; align-items:center; justify-content:center; font-size:17px; }
+  .brand b { display:block; font:600 15px/1.3 var(--serif); letter-spacing:.2px; }
+  .brand .meta { display:block; }
+  .pills { display:grid; gap:6px; }
+  .menu { display:flex; flex-direction:column; gap:2px; }
+  .menu a { display:flex; align-items:center; gap:9px; padding:7px 10px; border-radius:9px;
+    color:var(--fg); text-decoration:none; font-size:13.5px; }
+  .menu a .ico { width:16px; text-align:center; color:var(--dim); }
+  .menu a:hover { background:var(--hover); }
+  .menu a.active { background:var(--accent-soft); color:var(--accent); font-weight:600; }
+  .menu a.active .ico { color:var(--accent); }
+  /* 后台发现异常但不切页时的「被看见」：侧栏对应项标红加圆点 */
+  .menu a.alert { color:var(--bad); font-weight:600; }
+  .menu a.alert .ico { color:var(--bad); }
+  .menu a.alert::after { content:"●"; margin-left:auto; font-size:10px; }
+  .side-actions { display:grid; gap:7px; margin-top:auto; }
+  .side-actions button { width:100%; }
+  .side .foot { display:flex; align-items:center; justify-content:space-between; gap:8px; }
+  main { flex:1; min-width:0; padding:22px 26px 72px; }
+  @media (max-width:900px) { main { padding:14px; } }
+
+  .pill { display:inline-flex; align-items:center; gap:7px; padding:4px 10px; border-radius:999px;
+    font-size:12px; border:1px solid var(--line); background:var(--panel); color:var(--dim); white-space:nowrap; }
   .pill::before { content:""; width:7px; height:7px; border-radius:50%; background:currentColor; opacity:.55; }
-  .pill.on { color:var(--ok); border-color:#24503a; }
-  .pill.off { color:var(--bad); border-color:#5c2b2b; }
-  .pill.warn { color:var(--warn); border-color:#5a4620; cursor:pointer; }
+  .pill.on { color:var(--ok); border-color:color-mix(in srgb, var(--ok) 35%, var(--line)); }
+  .pill.off { color:var(--bad); border-color:color-mix(in srgb, var(--bad) 35%, var(--line)); }
+  .pill.warn { color:var(--warn); border-color:color-mix(in srgb, var(--warn) 40%, var(--line)); cursor:pointer; }
 
-  main { padding:12px 16px 48px; display:block; }
-
-  /* ── 分组：默认只展开两块，低频大块收起（异常时自动展开）── */
-  .group { border:1px solid var(--line); border-radius:11px; background:var(--panel); margin-bottom:12px; overflow:hidden; }
-  /*
-    标题栏**不要**用 position:sticky。
-    .group 上有 overflow:hidden（为了圆角裁切），这会让 .group 变成滚动容器，
-    于是 sticky 的 scrollport 就是分组自己的上边缘、`top:41px` 立刻生效：
-    标题栏被往下推 41px，但它在文档流里占的位置没变 ⇒ **每个分组第一张卡片顶上
-    41px 正好被标题栏盖住**（「运行快照」这个 h2 就是被它吃掉的，看起来像凭空消失）。
-    代价是长分组滚动时看不到分组名，这个代价比"内容被静默遮住"小得多。
-  */
-  .group > summary { list-style:none; cursor:pointer; padding:9px 14px; display:flex; align-items:center; gap:10px; font-size:13.5px; font-weight:600; background:var(--panel2); }
+  /* ── 分组：折叠容器，异常时自动展开（脚本依赖 details.open，别改成别的标签）── */
+  .group { border:1px solid var(--line); border-radius:14px; background:var(--panel); margin-bottom:16px;
+    overflow:hidden; box-shadow:0 1px 2px rgba(30,25,15,.04); }
+  .group > summary { list-style:none; cursor:pointer; padding:13px 18px; display:flex; align-items:baseline;
+    gap:10px; background:var(--panel); border-bottom:1px solid var(--line2); }
   .group > summary::-webkit-details-marker { display:none; }
-  .group > summary::before { content:"▸"; color:var(--dim); font-size:11px; transition:transform .15s; }
+  .group > summary::before { content:"▸"; color:var(--dim); font-size:11px; transition:transform .15s; align-self:center; }
   .group[open] > summary::before { transform:rotate(90deg); }
-  .group > summary .gh { color:var(--dim); font-weight:400; font-size:12px; }
-  .group > summary .gcount { margin-left:auto; color:var(--dim); font-weight:400; font-size:12px; padding-left:8px; }
-  .group > summary:hover .gh { color:var(--fg); }
-  .group > section.card { border:0; border-top:1px solid var(--line2); border-radius:0; background:transparent; }
+  .group > summary { font:600 15.5px/1.4 var(--serif); }
+  .group > summary .gh { color:var(--dim); font-weight:400; font:400 12px/1.5 var(--sans); }
+  .group > summary .gcount { margin-left:auto; color:var(--dim); font:400 12px/1.5 var(--sans); padding-left:8px; }
+  .group[open] > summary { border-bottom:1px solid var(--line2); }
+  .group > section.card { border:0; border-top:0; border-radius:0; background:transparent; box-shadow:none; }
   .group > section.card:first-of-type { border-top:0; }
+  /* 独立页面模式：侧栏点一下 = 切到那一页，同屏只显示一个分组（.page-on），
+     不再是「全部展开 + 滚动定位」。菜单由页面尾部的导航脚本生成并负责切页。 */
+  .group:not(.page-on) { display:none; }
+  .group.page-on { margin-bottom:0; }
 
-  /* 两列等高（stretch）：一列内容长、一列短时，短的那张卡跟着拉满，不会在下面留一块空洞 */
-  .cols { display:grid; grid-template-columns: minmax(300px,1fr) minmax(320px,1.05fr); gap:0; align-items:stretch; }
+  .cols { display:grid; grid-template-columns:minmax(300px,1fr) minmax(320px,1.05fr); gap:0; align-items:stretch; }
   .cols > section.card + section.card { border-left:1px solid var(--line2); }
-  @media (max-width: 980px) { .cols { grid-template-columns:1fr; } .cols > section.card + section.card { border-left:0; } }
+  @media (max-width:980px) { .cols { grid-template-columns:1fr; } .cols > section.card + section.card { border-left:0; border-top:1px solid var(--line2); } }
+  .tscroll { overflow-x:auto; } .tscroll > table { min-width:560px; }
 
-  /* 窄屏下端口表 5 列会把「监听（7 条连接）」挤成两行：让它横向滚动，别硬压字 */
-  .tscroll { overflow-x:auto; }
-  .tscroll > table { min-width:560px; }
-
-  .card { background:var(--panel); border:1px solid var(--line); border-radius:10px; padding:11px 13px; min-width:0; }
-  .card h2 { font-size:12.5px; margin:0 0 9px; color:var(--fg); font-weight:600; letter-spacing:.3px; display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
-  .card h2 .meta { font-weight:400; }
-
+  .card { background:var(--panel); border:1px solid var(--line); border-radius:0; padding:13px 16px; min-width:0; }
+  .card h2 { font:600 12px/1.5 var(--sans); letter-spacing:.6px; margin:0 0 10px; color:var(--dim);
+    display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
+  .card h2 .meta { font-weight:400; letter-spacing:0; }
   table { width:100%; border-collapse:collapse; font-size:12.5px; }
-  td, th { text-align:left; padding:4px 4px; border-bottom:1px solid var(--line2); }
+  td, th { text-align:left; padding:5px 6px; border-bottom:1px solid var(--line2); }
   th { color:var(--dim); font-weight:500; }
-  tbody tr:hover { background:#1b2836; }
+  tbody tr:hover { background:var(--hover); }
   .dot { display:inline-block; width:7px; height:7px; border-radius:50%; margin-right:6px; background:var(--bad); }
   .dot.on { background:var(--ok); }
 
-  button, select, input { background:#22303f; color:var(--fg); border:1px solid var(--line); border-radius:7px; padding:5px 10px; cursor:pointer; font-size:12.5px; font-family:inherit; }
-  button:hover, select:hover { border-color:var(--accent); }
-  button.primary { background:var(--accent); border-color:var(--accent); color:#06121f; font-weight:600; }
-  button.danger { border-color:#5c2b2b; color:#ffb4ae; }
+  button, select, input { background:var(--panel); color:var(--fg); border:1px solid var(--line);
+    border-radius:9px; padding:6px 12px; cursor:pointer; font:12.5px/1.4 var(--sans); }
+  button:hover, select:hover { border-color:var(--accent); color:var(--accent); }
+  button.primary { background:var(--accent); border-color:var(--accent); color:var(--accent-ink); font-weight:600; }
+  button.primary:hover { filter:brightness(1.05); color:var(--accent-ink); }
+  button.danger { color:var(--bad); border-color:color-mix(in srgb, var(--bad) 40%, var(--line)); }
+  button.danger:hover { background:color-mix(in srgb, var(--bad) 8%, var(--panel)); }
   button:disabled { opacity:.45; cursor:not-allowed; }
   input[type=text], input[type=number] { cursor:text; }
   input[type=text] { width:100%; }
   .row { display:flex; flex-wrap:wrap; gap:7px; margin-bottom:7px; align-items:center; }
   .row:last-child { margin-bottom:0; }
-  pre { margin:0; padding:9px 10px; background:#0b131b; border:1px solid var(--line2); border-radius:8px; max-height:230px; overflow:auto; font-size:12px; line-height:1.45; white-space:pre-wrap; word-break:break-all; }
+  pre { margin:0; padding:10px 12px; background:var(--code); border:1px solid var(--line2); border-radius:10px;
+    max-height:230px; overflow:auto; font-size:12px; line-height:1.5; white-space:pre-wrap; word-break:break-all; }
   .meta { color:var(--dim); font-size:12px; }
-  .warnbox { border-color:#5a4620; background:#241d0f; color:#f0d08a; }
-  .badbox { border-color:#5c2b2b; background:#241010; color:#ffb4ae; }
+  .warnbox { border-color:color-mix(in srgb, var(--warn) 40%, var(--line)); background:color-mix(in srgb, var(--warn) 7%, var(--panel)); color:color-mix(in srgb, var(--warn) 80%, var(--fg)); }
+  .badbox { border-color:color-mix(in srgb, var(--bad) 40%, var(--line)); background:color-mix(in srgb, var(--bad) 7%, var(--panel)); color:color-mix(in srgb, var(--bad) 85%, var(--fg)); }
   .grid2 { display:grid; grid-template-columns:1fr 1fr; gap:8px; }
-  @media (max-width: 700px) { .grid2 { grid-template-columns:1fr; } }
+  @media (max-width:700px) { .grid2 { grid-template-columns:1fr; } }
 
-  /* 事件流：高度跟着窗口走，不再固定 360 挤成一坨 */
-  .stream { max-height:44vh; overflow:auto; border:1px solid var(--line2); border-radius:8px; }
+  .stream { max-height:44vh; overflow:auto; border:1px solid var(--line2); border-radius:10px; }
   .stream table { font-size:12px; }
   .stream thead th { position:sticky; top:0; background:var(--panel); z-index:1; }
   .stream tr { cursor:pointer; }
-  .stream tr:hover { background:#1d2a38; }
+  .stream tr:hover { background:var(--hover); }
   .lv { font-weight:600; }
   .lv.error { color:var(--bad); } .lv.warn { color:var(--warn); } .lv.info { color:var(--accent); } .lv.debug { color:var(--dim); }
   .ok { color:var(--ok); } .bad { color:var(--bad); }
   .chain li { margin-bottom:4px; font-family:Consolas,monospace; font-size:12px; }
-  .check { display:flex; gap:8px; align-items:flex-start; padding:3px 0; border-bottom:1px solid var(--line2); }
+  .check { display:flex; gap:8px; align-items:flex-start; padding:4px 0; border-bottom:1px solid var(--line2); }
   .check .hint { color:var(--dim); font-size:12px; }
-  .toast { position:fixed; right:16px; bottom:16px; background:#1d2a38; border:1px solid var(--line); padding:10px 14px; border-radius:8px; max-width:60ch; opacity:0; transition:.2s; z-index:20; }
+  .toast { position:fixed; right:18px; bottom:18px; background:var(--panel); border:1px solid var(--line);
+    padding:10px 14px; border-radius:12px; max-width:60ch; opacity:0; transition:.2s; z-index:20;
+    box-shadow:0 6px 24px rgba(30,25,15,.10); }
   .toast.show { opacity:1; }
   .kv { display:grid; grid-template-columns:auto 1fr; gap:3px 10px; font-size:12.5px; }
   .kv b { color:var(--dim); font-weight:500; }
-  code { background:#0b131b; padding:0 4px; border-radius:4px; }
+  code { background:var(--code); padding:0 4px; border-radius:4px; }
 
-  /* 危险操作单独圈出来：以前和常规按钮同一行，误点一次就全停 */
-  .danger-zone { border:1px dashed #5c2b2b; border-radius:8px; padding:7px 9px; margin-top:8px; }
-  .danger-zone .zh { color:#ffb4ae; font-size:12px; margin-bottom:6px; }
+  .danger-zone { border:1px dashed color-mix(in srgb, var(--bad) 45%, var(--line)); border-radius:10px;
+    padding:8px 10px; margin-top:8px; }
+  .danger-zone .zh { color:var(--bad); font-size:12px; margin-bottom:6px; }
   .subhead { color:var(--dim); font-size:12px; margin:9px 0 5px; letter-spacing:.4px; }
   .subhead:first-child { margin-top:0; }
+  /* 未登录扫码浮层：浮在当前页上（不切页、不抢滚动），可关闭 */
+  .modal { position:fixed; inset:0; background:rgba(34,33,31,.42); display:flex; align-items:center;
+    justify-content:center; z-index:60; padding:16px; }
+  .modal.off { display:none; }
+  .modal-card { background:var(--panel); border:1px solid var(--line); border-radius:16px;
+    padding:16px 18px 18px; width:min(330px,92vw); box-shadow:0 18px 50px rgba(0,0,0,.28); }
+  .modal-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
+  .modal-head b { font:600 15.5px/1.3 var(--serif); }
+  .modal-x { border:0; background:transparent; color:var(--dim); font-size:16px; cursor:pointer; padding:2px 6px; }
+  #qrModalImg { width:100%; border-radius:10px; border:1px solid var(--line2); background:#fff; display:block; }
+  .modal .meta { margin:8px 0 10px; font-size:12px; color:var(--dim); word-break:break-all; }
 </style>
 </head>
 <body>
-<header>
-  <h1>🐋 小鲸鱼控制台</h1>
-  <span id="botPill" class="pill">机器人：未知</span>
-  <span id="hostPill" class="pill">宿主：未知</span>
-  <span id="bridgePill" class="pill">桥：未知</span>
-  <span id="errPill" class="pill" title="最近事件里的 error / warn">事件：-</span>
-  <span id="connPill" class="pill off" style="display:none">⚠️ 面板连接失败</span>
-  <span class="spacer"></span>
-  <span class="meta" id="stamp"></span>
-  <button onclick="refresh()">刷新</button>
-  <button onclick="runDiagnose()">一键体检</button>
-  <button onclick="exportBundle()">导出诊断包</button>
-  <label class="meta" title="QQ 号按位掩码、消息原文只留长度；要发给别人排查请保持勾选"><input type="checkbox" id="exportRedact" checked /> 脱敏</label>
-</header>
-
+<div class="app">
+<aside class="side">
+  <div class="brand">
+    <span class="logo">🐧</span>
+    <div><b>QQ 集成接入 · 控制台</b><span class="meta">独立进程 · 127.0.0.1:8880</span></div>
+  </div>
+  <div class="pills">
+    <span id="botPill" class="pill">机器人：未知</span>
+    <span id="hostPill" class="pill">宿主：未知</span>
+    <span id="bridgePill" class="pill">桥：未知</span>
+    <span id="errPill" class="pill" title="最近事件里的 error / warn">事件：-</span>
+    <span id="connPill" class="pill off" style="display:none">⚠️ 面板连接失败</span>
+  </div>
+  <nav class="menu" id="menu" aria-label="分组导航"></nav>
+  <div class="side-actions">
+    <button class="primary" onclick="refresh()">刷新</button>
+    <button onclick="runDiagnose()">一键体检</button>
+    <button onclick="exportBundle()">导出诊断包</button>
+    <label class="meta" title="QQ 号按位掩码、消息原文只留长度；要发给别人排查请保持勾选" style="display:flex;align-items:center;gap:6px">
+      <input type="checkbox" id="exportRedact" checked /> 导出时脱敏
+    </label>
+  </div>
+  <div class="foot"><span class="meta" id="stamp"></span></div>
+</aside>
 <main>
+  <!-- 总控页：一键启动 / 重启 DSH 宿主 / 全部停止。桌面启动器只负责打开本控制台，
+       其余启停都在这里操作（启动器启动控制台即可，其他在控制台操作）。 -->
+  <details class="group page-on" id="gControl" open>
+    <summary>总控 · 一键启停 <span class="gh">一键启动 / 重启 DSH 宿主 / 全部停止</span></summary>
+    <section class="card" style="grid-column:1/-1">
+      <h2>一键启动</h2>
+      <div class="row">
+        <button class="primary" onclick="act('/api/all/start')">▶ 一键启动</button>
+        <button onclick="act('/api/host/restart')">重启 DSH 宿主</button>
+      </div>
+      <div class="meta" style="margin-top:6px">
+        顺序：Waylay → DSH 宿主 → 本地语音（未配置语音则跳过）；已在运行的项自动跳过，单项失败不影响后面的步骤。
+        启动要几秒到几十秒（QQ 注入比较慢），看下方状态行或点侧栏「刷新」确认。
+      </div>
+      <div class="subhead">当前状态</div>
+      <div id="ctlStatus" class="meta">（加载中…）</div>
+      <div class="danger-zone" style="margin-top:12px">
+        <div class="zh">⚠️ 停止类 · 会真的结束进程</div>
+        <div class="row">
+          <button class="danger" onclick="act('/api/all/stop')">全部停止</button>
+          <span class="meta">分项的启停按钮在「概览」页。</span>
+        </div>
+      </div>
+    </section>
+  </details>
+
   <details class="group" id="gOverview" open>
     <summary>概览 · 端口与操作 <span class="gh">状态 / 启停 / 路径配置</span></summary>
     <div class="cols">
@@ -144,30 +224,35 @@
   </section>
   <section style="grid-column:1/-1" class="card">
     <h2>操作</h2>
+    <div class="subhead">Waylay · 当前后端（注入进 QQ 运行，没有独立进程）</div>
+    <div id="waylayStatus" class="meta">（加载中…）</div>
+    <div class="row" style="margin-top:6px">
+      <a id="waylayLink" href="http://127.0.0.1:13000/" target="_blank"><button>打开 Waylay 控制台（13000）</button></a>
+      <a id="waylayQrLink" href="http://127.0.0.1:13000/qrcode" target="_blank"><button>看登录二维码</button></a>
+      <span class="meta" id="waylayPaths"></span>
+    </div>
     <div class="subhead">启动 / 重启</div>
     <div class="row">
       <button class="primary" onclick="act('/api/host/start')">启动宿主</button>
       <button onclick="act('/api/host/restart')">重启宿主</button>
-      <button onclick="act('/api/napcat/start')">启动 NapCat</button>
-      <button onclick="act('/api/tts/start')">启动 GPT-SoVITS</button>
+      <button onclick="act('/api/waylay/start')">启动 Waylay</button>
+      <button onclick="act('/api/tts/start')">启动本地语音</button>
     </div>
     <div class="subhead">打开别的面板</div>
     <div class="row">
       <a id="hostLink" href="#" target="_blank" style="display:none"><button>打开机器人控制台（3080）</button></a>
-      <a id="napcatLink" href="#" target="_blank"><button>QQ助手账号</button></a>
-      <!-- 别写「前者 / 后者」：hostLink 在宿主未运行或没配 hostUrl 时是隐藏的，那样「前者」根本不在 -->
-      <span class="meta">QQ助手账号 = NapCat 的 WebUI（登录状态 / 扫码）；宿主在跑时前面还会多一个「机器人控制台（3080）」</span>
+      <span class="meta">登录状态与扫码都在 Waylay 的 13000 控制台；宿主在跑时还会多一个「机器人控制台（3080）」</span>
     </div>
     <!--
-      停止类按钮以前和启动按钮挤在同一行（「启动 NapCat」右边紧挨「停止 NapCat」），
-      误点一次就直接结束进程。单独圈出来，并且逐个都有 confirm。
+      停止类按钮不和启动按钮挤在同一行（误点一次就直接结束进程）。
+      单独圈出来，并且逐个都有 confirm。
     -->
     <div class="danger-zone">
       <div class="zh">⚠️ 停止类 · 会真的结束进程</div>
       <div class="row">
         <button class="danger" onclick="act('/api/host/stop')">停止宿主</button>
-        <button class="danger" id="napcatStopBtn" onclick="act('/api/napcat/stop')">停止 NapCat（含其 QQ 子进程）</button>
-        <button class="danger" onclick="act('/api/tts/stop')">停止 GPT-SoVITS</button>
+        <button class="danger" id="waylayStopBtn" onclick="act('/api/waylay/stop')">停止 Waylay（会关掉被注入的那个 QQ）</button>
+        <button class="danger" onclick="act('/api/tts/stop')">停止本地语音</button>
         <button class="danger" onclick="act('/api/all/stop')">全部停止</button>
       </div>
     </div>
@@ -175,22 +260,22 @@
     <div class="grid2">
       <label class="meta">宿主工作目录<input id="cfgCwd" /></label>
       <label class="meta">dsh bin.js 路径<input id="cfgDshBin" /></label>
-      <label class="meta">NapCat 启动脚本<input id="cfgNapcatBat" placeholder="…\NapCat\bootmain\launcher.bat" /></label>
-      <label class="meta">GPT-SoVITS 启动脚本<input id="cfgTtsBat" /></label>
+      <label class="meta">Waylay 入口脚本<input id="cfgWaylayBat" placeholder="…\_tmp\rin-inject\rin-waylay.bat" /></label>
+      <label class="meta">Waylay 登录 QQ 号<input id="cfgWaylayUin" placeholder="留空 = 用入口脚本里的默认号" /></label>
+      <label class="meta">本地语音启动脚本<input id="cfgTtsBat" /></label>
     </div>
     <!--
-      这段提示是 issue #2 的直接产物：用户按报错里的 "shimFile" 去文件夹里翻了五小时。
-      说清"填哪个文件"（launcher.bat 而不是 napcat.bat）与"另外两个文件是自动生成的、在工作目录里"。
+      这段提示说清"填哪个文件"（rin-waylay.bat，入口同目录的日志与二维码是自动生成的）。
     -->
     <div class="meta" style="margin-top:6px">
-      NapCat 启动脚本填 <b>bootmain\launcher.bat</b>（不是同目录的 napcat.bat：那个只是拉起加载器 + pause，实测秒退）；
-      留空时控制台会自己去常见安装位置找。启动时会在<b>工作目录</b>里生成
-      <code>qq-napcat-launch.cmd</code>（垫片脚本）与 <code>qq-napcat-launch.log</code>（启动日志）——
-      它们是点「启动 NapCat」时现写的，<b>不在插件安装包里</b>，所以别去插件目录找。
+      Waylay 入口填 <b>rin-waylay.bat</b>（内部会 call rin-launch.bat waylay &lt;QQ号&gt;），留空时按标准布局自动找。
+      三件容易误会的事：<b>①</b> 启动后<b>不会弹 QQ 窗口</b>——注入器把 QQ 的 main 换掉了，这是正常的；
+      <b>②</b>「停止 Waylay」物理上就是关掉那个被注入的 QQ，控制台只认监听 13000 的那个进程，不会误伤你自己开的 QQ；
+      <b>③</b> 日志是入口同目录的 <code>rin-inject.log</code>，二维码是 <code>qrcode.png</code>（未出码说明走了快登）。
     </div>
     <div class="row" style="margin-top:8px">
       <button onclick="saveConfig()">保存路径配置</button>
-      <span class="meta">端口改动请编辑 qq-control.json（避免误改 6700）</span>
+      <span class="meta">端口改动请编辑 qq-control.json（避免误改 6700 / 13000）</span>
     </div>
   </section>
     </div>
@@ -233,7 +318,7 @@
   </details>
 
   <details class="group" id="gDiag">
-    <summary>诊断 · 体检与验收 <span class="gh">出错才需要看；有 ❌ 时会自动展开</span><span class="gcount" id="diagCount"></span></summary>
+    <summary>诊断 · 体检与验收 <span class="gh">出错才需要看；有 ❌ 时侧栏标红</span><span class="gcount" id="diagCount"></span></summary>
   <section class="card" style="grid-column:1/-1">
     <h2>硬约束验收台 <span class="meta" id="acceptMeta">（v0.4「一切皆可调试」6 条硬约束的实时证据）</span></h2>
     <div class="row">
@@ -369,12 +454,13 @@
   </details>
 
   <details class="group" id="gLogin">
-    <summary>登录 · 二维码 <span class="gh">NapCat 扫码；未登录时自动展开</span><span class="gcount" id="loginCount"></span></summary>
+    <summary>登录 · 二维码 <span class="gh">Waylay 扫码；未登录时自动展开</span><span class="gcount" id="loginCount"></span></summary>
   <section class="card" style="grid-column:1/-1">
-    <h2>登录二维码 <span class="meta" id="qrMeta">（NapCat 只在 QQ 侧产出新码时刷新一次；过期后文件就不再变化，看时间比看"文件在不在"可靠）</span></h2>
+    <h2>登录二维码 <span class="meta" id="qrMeta">（Waylay 只在 QQ 侧产出新码时写一次文件；过期后文件就不再变化，看时间比看"文件在不在"可靠）</span></h2>
     <div class="row">
-      <button onclick="loadQr()">刷新二维码</button>
-      <button onclick="act('/api/napcat/restart')">重启登录流程（会结束 QQ/NapCat 后重开）</button>
+      <button onclick="refreshQrNow()">刷新二维码</button>
+      <button class="danger" onclick="act('/api/waylay/stop')">重开登录 ① 停止 Waylay（关掉那个 QQ）</button>
+      <button onclick="act('/api/waylay/start')">② 再启动 Waylay（重新走登录）</button>
       <span class="meta" id="qrState"></span>
     </div>
     <div style="margin-top:8px"><img id="qrImg" alt="登录二维码" style="display:none;width:220px;height:220px;image-rendering:pixelated;background:#fff;padding:6px;border-radius:8px" /></div>
@@ -384,6 +470,37 @@
 </main>
 
 <div class="toast" id="toast"></div>
+<!-- 未登录扫码浮层：需要登录时自动弹出；关掉后本轮不再弹。只在 Waylay 有码/在跑时出现。 -->
+<div id="qrModal" class="modal off" role="dialog" aria-modal="true" aria-label="扫码登录 QQ">
+  <div class="modal-card">
+    <div class="modal-head">
+      <b>扫码登录 QQ</b>
+      <button class="modal-x" title="关掉（本轮不再自动弹；再需要时去「登录·二维码」页）" onclick="closeQrModal(true)">✕</button>
+    </div>
+    <img id="qrModalImg" alt="登录二维码" style="display:none" />
+    <div class="meta" id="qrModalHint">正在读取二维码…</div>
+    <div class="row">
+      <button onclick="refreshQrNow()">刷新二维码</button>
+      <a href="http://127.0.0.1:13000/qrcode" target="_blank"><button>在 Waylay 里打开</button></a>
+    </div>
+  </div>
+</div>
+<!--
+  首次启动向导：只在「**还没选数据根目录**」时自动弹。
+
+  判据刻意用运行快照里的 `dataDir.configured === false`（**真实状态**），而不是
+  localStorage 里的"看过了"标记：后者一旦写错或用户手改配置，界面就会撒谎说"你配过了"；
+  反过来，用户想把目录换掉、手动清空 dataDir 时，向导也会**自然回来**——这正是期望行为。
+-->
+<div id="setupModal" class="modal off" role="dialog" aria-modal="true" aria-label="选择数据根目录">
+  <div class="modal-card" style="width:min(560px,94vw)">
+    <div class="modal-head">
+      <b>先给她选一个放东西的地方</b>
+      <button class="modal-x" title="稍后再说（横幅会一直提醒；随时可从横幅再打开）" onclick="closeSetupModal()">✕</button>
+    </div>
+    <div id="setupBody"></div>
+  </div>
+</div>
 
 <script>
 const token = new URLSearchParams(location.search).get('token') || '';
@@ -395,7 +512,7 @@ if (!token) {
   box.style.gridColumn = '1/-1';
   box.innerHTML = '<h2>地址里没有 token</h2>'
     + '<div>控制台的每个接口都需要 token，所以下面所有面板都会显示「token 无效」。请用启动控制台时窗口里打印的那行完整地址打开，例如：</div>'
-    + '<div style="margin-top:6px"><code>http://127.0.0.1:' + (location.port || '8799') + '/?token=&lt;控制台 token&gt;</code></div>'
+    + '<div style="margin-top:6px"><code>http://127.0.0.1:' + (location.port || '8880') + '/?token=&lt;控制台 token&gt;</code></div>'
     + '<div style="margin-top:6px" class="meta">控制台 token 固定保存在 <code>qq-control.json</code> 里；<b>宿主 3080 的 token 每次重启都会变</b>，两者不能混用。</div>';
   document.body.insertBefore(box, document.body.firstChild);
 }
@@ -406,6 +523,9 @@ let streamEvents = [];
 let diagReport = null;
 let lastRuntime = null;
 let loginAutoDone = false;
+// 未登录扫码浮层：关掉后本轮不再弹（换一轮登录会重置），它不切页、不抢滚动
+let qrModalDismissed = false;
+let loginNeededPrev = false;
 const pageErrors = [];
 
 /**
@@ -414,10 +534,22 @@ const pageErrors = [];
  * 一个 `open=false` 的 `<details>` 里，用户照样看不到——而这类元素（面板脚本错误、
  * 配置提醒）恰恰是「出事了必须被看见」的那一类。所以凡是让它可见的地方，都要顺手展开分组。
  */
-function revealGroup(el) {
+function revealGroup(el, { activate = false } = {}) {
   const group = el?.closest?.('details.group');
-  if (group && !group.open) group.open = true;
+  if (group) {
+    // 只有「用户主动要去看」（focusCard）才切页；后台轮询（体检警告、自动展开等）
+    // 只保证内容就绪，**绝不抢当前页**——否则 30 秒一次的体检就能把人从别的页拽走
+    //（2026-10-30 实测：页面被反复定位到诊断页，根因就是这里）。
+    if (activate && typeof window.__showPage === 'function') window.__showPage(group.id);
+    else if (!group.open) group.open = true;
+  }
   return group;
+}
+
+// 侧栏导航项标红（后台发现异常但又不该抢页时的「被看见」通道）
+function markMenuAlert(id, on = true) {
+  const link = document.querySelector(`#menu a[href="#${id}"]`);
+  if (link) link.classList.toggle('alert', on);
 }
 
 // 面板自己也要可调试：任何脚本错误 / 未处理的 Promise 失败都直接显示出来。
@@ -426,8 +558,10 @@ function reportPageError(text) {
   const el = document.getElementById('pageErrors');
   if (!el) return;
   el.style.display = '';
-  revealGroup(el);
+  revealGroup(el);   // 只保证内容就绪，不切页（页面在诊断页时本来就能看到）
+  markMenuAlert('gDiag');
   el.innerHTML = '<h2>面板脚本错误（请连同这条截图反馈）</h2>' + pageErrors.map((line) => `<div class="check"><span>❌</span><div>${line}</div></div>`).join('');
+  toast('⚠️ 面板脚本错误，详情在「诊断」页（侧栏已标红）');
 }
 window.addEventListener('error', (event) => reportPageError(`${event.message} @ ${event.filename}:${event.lineno}`));
 window.addEventListener('unhandledrejection', (event) => reportPageError(`Promise 失败：${event.reason?.message ?? event.reason}`));
@@ -442,16 +576,18 @@ function toast(text) {
   clearTimeout(el._t); el._t = setTimeout(() => el.classList.remove('show'), 4500);
 }
 async function act(path) {
-  const labels = { '/api/host/stop': '停止宿主', '/api/napcat/stop': '停止 NapCat/QQ', '/api/tts/stop': '停止 GPT-SoVITS', '/api/all/stop': '全部停止' };
+  const labels = {
+    '/api/host/stop': '停止宿主',
+    '/api/waylay/stop': '停止 Waylay —— 这会关掉那个被注入的 QQ（机器人账号会下线）',
+    '/api/tts/stop': '停止本地语音',
+    '/api/all/stop': '全部停止',
+  };
   if (labels[path] && !confirm(labels[path] + '？')) return;
-  /**
-   * 启动 NapCat 现在会**等服务端确认垫片心跳**（最多 8 秒），所以按钮要禁一下并说在等什么——
-   * 否则用户以为"点了没反应"就会连点，连点又会拉起第二个提权进程（issue #2 的现场感受就是这么来的）。
-   */
-  const busy = /napcat\/(start|restart)/.test(path);
+  // 启动 Waylay 期间按钮禁一下，防止连点拉起第二个注入（提示语不再提"8 秒"，注入是快返的）。
+  const busy = /waylay\/start/.test(path);
   const button = busy ? document.querySelector(`button[onclick="act('${path}')"]`) : null;
   const label = button?.textContent || '';
-  if (button) { button.disabled = true; button.textContent = '请求中…（最多等 8 秒）'; }
+  if (button) { button.disabled = true; button.textContent = '请求中…'; }
   try {
     const result = await api(path, { method: 'POST', body: JSON.stringify({}) });
     toast((result.ok === false ? '⚠️ ' : '✅ ') + (result.reason || '完成'));
@@ -463,6 +599,123 @@ async function act(path) {
 function freePort(name) {
   if (!confirm('结束占用该端口的进程？')) return;
   api('/api/port/free', { method: 'POST', body: JSON.stringify({ name }) }).then((r) => { toast((r.ok ? '✅ ' : '⚠️ ') + r.reason); setTimeout(refresh, 1200); });
+}
+/**
+ * 打开数据根目录。路径完全由服务端从**运行快照**里取（那是桥真正在用的目录），
+ * 前端不拼路径——拼了就会和实际落盘位置不一致，而这种不一致只能靠用户自己发现。
+ */
+function openDataDir() {
+  api('/api/data-dir/open', { method: 'POST', body: '{}' })
+    .then((r) => toast((r.ok ? '✅ ' : '⚠️ ') + (r.reason || r.path || '已打开')))
+    .catch((e) => toast('⚠️ 打开失败：' + e.message));
+}
+// ─────────────────────────────── 首次启动向导：选数据根目录 ───────────────────────────────
+/**
+ * 自动弹的**判据是真实状态**（快照里 `dataDir.configured === false`），不是"看过了"的标记：
+ *   · 用标记 ⇒ 用户手改配置、或换了浏览器，界面就在撒谎（"你配过了" / 又弹一次）；
+ *   · 用状态 ⇒ 选完自然不再弹；把手动清空 dataDir 想重选，它也会自然回来。
+ *
+ * `setupDismissed` 只保证**同一轮刷新**里不再弹（否则每两秒一次刷新都会把它弹回来，用户关不掉）。
+ */
+let setupDismissed = false;
+let setupBusy = false;   // 弹窗/写配置期间别让刷新把内容冲掉
+
+function openSetupModal() {
+  renderSetupIntro();
+  document.getElementById('setupModal').classList.remove('off');
+}
+function closeSetupModal(dismissed = true) {
+  if (dismissed) setupDismissed = true;
+  document.getElementById('setupModal').classList.add('off');
+}
+function maybeAutoOpenSetup(runtime) {
+  const dd = runtime && runtime.dataDir;
+  // `configured !== false` ⇒ 已经选过（或宿主里的插件版本较旧、快照没这个字段）：不打扰。
+  if (!dd || dd.configured !== false) return;
+  if (setupDismissed || setupBusy) return;
+  if (!document.getElementById('setupModal').classList.contains('off')) return;
+  setupBusy = true;
+  openSetupModal();
+  setupBusy = false;
+}
+
+function renderSetupIntro() {
+  const dd = lastRuntime && lastRuntime.dataDir;
+  const current = (dd && dd.path) || '';
+  document.getElementById('setupBody').innerHTML = `
+    <div class="meta" style="margin-top:0">
+      她的<b>记忆 / 聊天记录 / 收发文件 / DLP 金丝雀</b>都放在<b>同一个目录</b>里（都以 <code>qq-</code> 开头）。
+      现在还没选，所以临时用的是 <code>${escapeHtml(current || '（还不知道）')}</code>。
+    </div>
+    <div class="subhead">选一个你方便打开看的地方</div>
+    <div class="row" style="gap:7px">
+      <input id="setupPath" type="text" style="flex:1 1 240px;width:auto"
+             value="${escapeAttr(current)}" placeholder="C:\\Users\\你\\qq_chat" />
+      <button onclick="browseDataDir()" title="弹系统选文件夹窗口（只选，不写）">浏览…</button>
+    </div>
+    <div class="meta">
+      必须是<b>绝对路径</b>。留空 = 继续用上面那个兜底目录（横幅会一直提醒）。
+      <b>换目录不会自动搬旧数据</b>：要搬就把旧的 <code>qq-*</code> 整个拷过去 ——
+      <b>包括 <code>qq-canary.json</code></b>（重新生成金丝雀，以前贴出去的旧哨兵串就再也认不出来了）。
+    </div>
+    <div class="row" style="margin-top:12px">
+      <button class="primary" onclick="submitDataDir()">就用这个目录</button>
+      <button onclick="closeSetupModal()">稍后再说</button>
+    </div>
+    <div class="meta" id="setupMsg"></div>`;
+}
+
+async function browseDataDir() {
+  const msg = document.getElementById('setupMsg');
+  if (msg) msg.textContent = '正在打开选文件夹窗口…（选完会自动填进来）';
+  const r = await api('/api/data-dir/browse', { method: 'POST', body: '{}' });
+  if (r.ok === true && r.path) {
+    const input = document.getElementById('setupPath');
+    if (input) input.value = r.path;
+    if (msg) msg.textContent = '已选中，确认无误后点「就用这个目录」。';
+  } else if (msg) {
+    msg.textContent = r.reason || '没有选到目录';
+  }
+}
+
+async function submitDataDir() {
+  const input = document.getElementById('setupPath');
+  const msg = document.getElementById('setupMsg');
+  const value = input ? input.value.trim() : '';
+  if (msg) msg.textContent = '正在写入配置…';
+  const r = await api('/api/data-dir/set', { method: 'POST', body: JSON.stringify({ path: value }) });
+  if (r.ok !== true) {
+    // 失败时**不关**弹窗：让人能改完再试，直接把内容清掉等于让他重新填一遍
+    if (msg) msg.textContent = '⚠️ ' + (r.reason || '写入失败');
+    return;
+  }
+  renderSetupDone(r);
+}
+
+function renderSetupDone(r) {
+  const target = r.target || {};
+  const facts = [];
+  if (target.exists !== true) facts.push('这个目录<b>还不存在</b> —— 宿主第一次往里写文件时会自己建。');
+  else if (target.qqCount > 0) {
+    facts.push(`这个目录里<b>已经有 ${target.qqCount} 个 <code>qq-*</code> 条目</b>，会沿用它们`
+      + (target.hasCanary ? '（含 <code>qq-canary.json</code>，金丝雀继续有效）' : '，但<b>没有</b> <code>qq-canary.json</code>'));
+  } else facts.push('这个目录现在是<b>空的</b>，她会从零开始建。');
+  const warnings = Array.isArray(r.warnings) ? r.warnings : [];
+  document.getElementById('setupBody').innerHTML = `
+    <div class="meta" style="margin-top:0;color:var(--ok)">✅ ${escapeHtml(r.reason || '已写入配置')}</div>
+    <div class="kv" style="margin-top:8px">
+      <b>数据根目录</b><span><code>${escapeHtml(r.value || '')}</code></span>
+      <b>写进了哪</b><span class="meta">${escapeHtml(r.patchFile || '')}${r.profile ? `（profile：${escapeHtml(r.profile)}）` : ''}</span>
+    </div>
+    <div class="meta" style="margin-top:8px">${facts.join(' ')}</div>
+    ${warnings.length ? `<div class="meta" style="margin-top:8px;color:#b45309">⚠️ ${warnings.map((w) => escapeHtml(w)).join('<br>⚠️ ')}</div>` : ''}
+    <div class="meta" style="margin-top:8px">配置写好了，但<b>要重启宿主才生效</b>（插件启动时读一次配置）。重启不会影响你另外开的 QQ。</div>
+    <div class="row" style="margin-top:12px">
+      <button class="primary" onclick="act('/api/host/restart')">重启宿主让它生效</button>
+      <button onclick="closeSetupModal()">好了</button>
+    </div>
+    <div class="meta">重启后这一行会变成「生效值」；如果重启后还弹这个向导，说明写入没被宿主读到（看上面那个文件路径对不对）。</div>`;
+  setupBusy = false;
 }
 function setLog(name) { currentLog = name; loadLog(true); }
 async function loadLog(force) {
@@ -483,14 +736,20 @@ function exportBundle() {
     : '正在下载诊断包（含明文消息与 QQ 号，发给别人前请勾选脱敏）');
 }
 async function runDiagnose() {
-  const result = await api('/api/diagnose');
-  diagReport = result.report;
-  renderDiagnose();
+  try {
+    const result = await api('/api/diagnose');
+    diagReport = result.report;
+    renderDiagnose();
+  } catch (error) {
+    // 30 秒一次的轮询不该变成 unhandledrejection（那会点亮诊断页的脚本错误卡）
+    setConnOk(false, error.message);
+  }
 }
 /**
  * 诊断分组默认是收起的（正常时确实不需要看）。但「收起」不能等于「藏起来」：
- * 一旦体检出现真正的 ❌（severity 不是 warn），就把分组顶开一次，并把计数写在标题上。
- * 只自动展开一次，用户自己收回去之后不再反复弹；等它重新变全绿，才重置这个闸。
+ * 一旦体检出现真正的 ❌（severity 不是 warn），就把计数写在标题上，并把侧栏「诊断」标红。
+ * 页面模式下**不切页**（抢当前页非常扰人）；只有用户本来就在诊断页时才顺带展开。
+ * 只自动处理一次，用户处理后不再反复弹；等它重新变全绿，才重置这个闸（并撤掉标红）。
  */
 let diagAutoOpened = false;
 function renderDiagnose() {
@@ -507,8 +766,12 @@ function renderDiagnose() {
   if (countEl) countEl.textContent = bad ? `❌ ${bad}` : (warn ? `⚠️ ${warn}` : '');
   if (countEl) countEl.style.color = bad ? 'var(--bad)' : (warn ? 'var(--warn)' : '');
   const group = document.getElementById('gDiag');
-  if (bad === 0) { diagAutoOpened = false; return; }
-  if (group && !diagAutoOpened) { group.open = true; diagAutoOpened = true; }
+  if (bad === 0) { diagAutoOpened = false; markMenuAlert('gDiag', false); return; }
+  if (!diagAutoOpened) {
+    diagAutoOpened = true;
+    if (group && group.classList.contains('page-on')) group.open = true;
+    else markMenuAlert('gDiag');
+  }
 }
 /**
  * 「桥：无快照」到底为什么 —— 三种情况分开说（issue #2 用户原话「我不理解，我不理解」：
@@ -547,6 +810,18 @@ function describeBridge(status) {
       + '而控制台看的是 ' + file + '。用控制台「启动宿主」两边就一致；自己起的宿主请把「配置 → 工作目录」调成同一个目录',
   };
 }
+/**
+ * 白名单已放行、还没说过话的（桥在运行快照里算好的差集）→ ['u:12340001', …]。
+ * 为什么要单独一行：桥只在**收到消息**时建会话，白名单只负责放行、不会预先建对话。
+ * 主人 2026-10-30 的原话是「新加白名单好友的好像没有创建新对话」——不把这个状态显示出来，
+ * 白名单明明生效了也会被当成"没生效"。
+ */
+function pendingWhitelistKeys(pending) {
+  const users = Array.isArray(pending?.users) ? pending.users : [];
+  const groups = Array.isArray(pending?.groups) ? pending.groups : [];
+  const all = [...users.map((id) => 'u:' + id), ...groups.map((id) => 'g:' + id)];
+  return { shown: all.slice(0, 24), total: all.length };
+}
 function renderRuntime(runtime, status) {
   const el = document.getElementById('runtime');
   if (!runtime) {
@@ -559,16 +834,35 @@ function renderRuntime(runtime, status) {
   const sessions = runtime.sessions || [];
   const features = runtime.features || {};
   const off = Object.entries(features).filter(([, v]) => v === false).map(([k]) => k);
+  const pending = pendingWhitelistKeys(runtime.whitelistPending);
+  /**
+   * 数据根目录：她所有东西（记忆 / 聊天记录 / 金丝雀）都在这一个目录下面。
+   * 这不是"诊断信息"，是**用户要的入口**——想翻聊天记录的人得能一键打开它。
+   * `configured=false` 时不能只说路径：那意味着还在吃 cwd 兜底，用户以为配过了其实没有。
+   */
+  const dd = runtime.dataDir || null;
+  const ddPath = dd && dd.path ? String(dd.path) : '';
+  const ddBanner = dd && dd.configured === false
+    ? `<div class="meta" style="margin-top:6px;color:#b45309">⚠️ 还没选数据根目录，现在临时用 <code>${escapeHtml(dd.path || '')}</code>（= cwd）。
+        <button onclick="openSetupModal()" style="margin-left:6px">现在就选</button><br>
+        <b>换目录不会自动搬旧数据</b>，旧的 qq-* 要自己拷过去（含 qq-canary.json）。</div>`
+    : '';
   el.innerHTML = `
     <div class="kv">
       <b>会话数</b><span>${runtime.sessionCount}（提醒 ${runtime.reminders} · 投票 ${runtime.votes} · 游戏 ${runtime.games} · 待审 ${runtime.joinsPending}）</span>
       <b>写操作闸门</b><span>已拒绝 ${runtime.gate?.denied ?? 0} 次</span>
       <b>事件计数</b><span>${runtime.trace?.total ?? 0} 条（error ${runtime.trace?.byLevel?.error ?? 0} / warn ${runtime.trace?.byLevel?.warn ?? 0}）</span>
       <b>关闭中的开关</b><span>${off.slice(0, 10).join('、') || '无'}${off.length > 10 ? ` 等 ${off.length} 项` : ''}</span>
+      <b>数据根目录</b><span>${ddPath
+        ? `<code>${escapeHtml(ddPath)}</code> <button onclick="openDataDir()" title="在资源管理器里打开这个目录">打开文件夹</button>`
+        : '<span class="meta">快照里没有这个字段（宿主里的插件版本较旧？）</span>'}</span>
     </div>
+    ${ddBanner}
+    ${pending.shown.length ? `<div class="meta" style="margin-top:6px">白名单已放行、还没说过话：${pending.shown.join('、')}${pending.total > pending.shown.length ? ` 等 ${pending.total} 个` : ''} —— 对方发第一条消息时自动建会话（桥只在收到消息时建，白名单只管放行）。</div>` : ''}
     ${sessions.length ? `<table style="margin-top:8px"><thead><tr><th>会话</th><th>sessionId</th><th>状态</th><th>来源</th><th>最近回合</th></tr></thead><tbody>
       ${sessions.map((s) => `<tr><td>${s.chatKey}</td><td class="meta">${String(s.sessionId).slice(0, 12)}</td><td>${s.status}</td><td>${s.resumed ? '续接' : '新建'}</td><td class="meta">${s.lastTurnAt ? new Date(s.lastTurnAt).toLocaleTimeString('zh-CN', { hour12: false }) : '-'}</td></tr>`).join('')}
     </tbody></table>` : '<div class="meta" style="margin-top:6px">当前没有活跃会话（发一条消息给机器人即可建立）。</div>'}`;
+  maybeAutoOpenSetup(runtime);
 }
 function renderStream() {
   const level = document.getElementById('fLevel').value;
@@ -637,7 +931,7 @@ function render(status) {
   hostPill.className = 'pill ' + (host?.listening ? 'on' : 'off');
   const botPill = document.getElementById('botPill');
   // v0.5.9：两个来源合起来看——`status.botOnline` 是 6700 上有没有 ESTABLISHED 连接（控制台自己数的），
-  // `runtime.botOnline` 是 NapCat 的 bot_online/bot_offline 通知（null = 这一版桥还没收到过）。
+  // `runtime.botOnline` 是 QQ 侧的 bot_online/bot_offline 通知（null = 这一版桥还没收到过）。
   // 只看前者会把"账号被顶下线、socket 还挂着"显示成在线；只看后者在旧版桥上是 undefined。
   const accountOnline = status.runtime?.botOnline;
   const connected = status.botOnline === true;
@@ -645,89 +939,71 @@ function render(status) {
   botPill.textContent = '机器人：' + (botUp ? '在线' : accountOnline === false ? '离线（账号掉线）' : '离线');
   botPill.className = 'pill ' + (botUp ? 'on' : 'off');
   botPill.title = botUp
-    ? `6700 上有 OneBot 连接${accountOnline === true ? '，NapCat 也报了 bot_online' : ''}`
+    ? `6700 上有 OneBot 连接${accountOnline === true ? '，QQ 侧也报了 bot_online' : ''}`
     : accountOnline === false
-      ? 'NapCat 报了 bot_offline：QQ 掉线，或同一账号在别处登录（同一客户端再开一个实例会抢会话）'
-      : '6700 上没有已建立的连接（NapCat 可能没在运行）';
+      ? 'QQ 侧报了 bot_offline：QQ 掉线，或同一账号在别处登录（同一客户端再开一个实例会抢会话）'
+      : '6700 上没有已建立的连接（Waylay 可能没在运行）';
   const bridgePill = document.getElementById('bridgePill');
   const bridge = describeBridge(status);
   bridgePill.textContent = '桥：' + bridge.label;
   bridgePill.className = 'pill ' + (bridge.alive ? 'on' : 'off');
   bridgePill.title = bridge.hint;
-  // 「QQ助手账号」按钮（= NapCat 的 WebUI：登录状态 / 扫码）：6099 没在监听时给的是死链，
-  // 这里直接禁用并说明原因。
-  // v0.5.9：链接必须是**带 token 的**——NapCat 的 WebUI 自己有 token（webui.json），
-  // 不带 token 点进去只会看到「token 无效」，这正是用户报的那个坑。
-  // v0.6.3：按钮统一叫「QQ助手账号」（与 DSH 设置页的面板入口同名），落点与插件面板一致
-  // 用 `/webui/?token=`（带尾斜杠的实测形状，见 lib/settings-routes.js 的 napcatWebUiUrl）。
-  const link = document.getElementById('napcatLink');
-  if (link) {
-    const napcatPort = (status.ports || []).find((item) => item.name === 'napcat');
-    const up = napcatPort?.listening === true;
-    const btn = link.querySelector('button');
-    link.href = up ? 'http://127.0.0.1:' + napcatPort.port + '/webui/' : '#';
-    link.removeAttribute('title');
-    if (btn) {
-      btn.disabled = !up;
-      btn.textContent = up ? 'QQ助手账号' : 'QQ助手账号不可用（NapCat 未运行）';
-    }
-    if (up) {
-      // 异步补上 token；拿不到就保留不带 token 的地址，并把原因写在 title 里
-      api('/api/napcat/webui').then((info) => {
-        if (info?.ok === true && info.url) {
-          link.href = info.url;
-          link.title = '已带上 NapCat 自己的 token（来自 bootmain/config/webui.json）';
-        } else {
-          link.title = '未能自动带上 NapCat token：' + (info?.reason || '未知原因') + '（可在 webui.json 里找 token 手动拼接）';
-        }
-      }).catch(() => {});
-    }
-  }
-  const napcat = status.processes?.napcatLoaders || [];
   const qqClients = status.processes?.qqClients || [];
-  const managed = status.processes?.napcatManaged === true;
   const qr = status.qr || {};
   /**
-   * 登录分组：未登录时自动顶开一次——那时候唯一该做的下一步就是扫码或重启登录流程。
-   * 判据要窄，否则「NapCat 根本没启动」也会顶开，变成纯噪音：
+   * 登录分组：未登录时自动顶开一次——那时候唯一该做的下一步就是扫码或重开登录。
+   * 判据要窄，否则「Waylay 根本没启动」也会顶开，变成纯噪音：
    *   ① 机器人不在线；且
-   *   ② 要么已经有二维码在等扫，要么 NapCat 端口在监听（说明正处在登录流程里）。
+   *   ② 要么已经有二维码在等扫，要么 Waylay 端口（13000）在监听（说明正处在登录流程里）。
    * 只顶一次；恢复在线后重置，下次真掉线还能再顶。
    */
   const loginGroup = document.getElementById('gLogin');
-  const napcatUp = (status.ports || []).some((p) => p.name === 'napcat' && p.listening);
-  const loginNeeded = !botUp && (qr.exists === true || napcatUp);
+  const waylayUp = (status.ports || []).some((p) => p.name === 'waylay' && p.listening);
+  const loginNeeded = !botUp && (waylayUp || qr.fresh === true);
   const loginCountEl = document.getElementById('loginCount');
   if (loginCountEl) {
     loginCountEl.textContent = botUp ? '' : (loginNeeded ? '待扫码' : '');
     loginCountEl.style.color = loginNeeded ? 'var(--warn)' : '';
   }
   if (botUp) loginAutoDone = false;
-  else if (loginNeeded && !loginAutoDone && loginGroup) { loginGroup.open = true; loginAutoDone = true; }
+  else if (loginNeeded && !loginAutoDone && loginGroup) {
+    // 页面模式：不切页抢人；当前就在登录页才展开，否则侧栏「登录」标红
+    loginAutoDone = true;
+    if (loginGroup.classList.contains('page-on')) loginGroup.open = true;
+    else markMenuAlert('gLogin');
+  }
+  // 未登录就弹出扫码浮层（浮在页面上，不动当前页；用户关掉后本轮不再打扰）
+  if (loginNeeded && !loginNeededPrev) qrModalDismissed = false;
+  loginNeededPrev = loginNeeded;
+  if (botUp) closeQrModal();
+  else if (loginNeeded && !qrModalDismissed) openQrModal();
   document.getElementById('procMeta').innerHTML =
-    `NapCat 加载器：${napcat.length ? napcat.map((p) => `${p.name}#${p.pid}`).join('、') : '未运行'}｜` +
-    `个人 QQ 客户端：${qqClients.length} 个${managed ? '（受 NapCat 管理）' : '（<b>不受管，控制台不会结束它们</b>）'}｜` +
-    `扫码图：${qr.exists ? (qr.fresh ? `新鲜（${qr.ageSeconds}s 前）` : `较旧（${Math.round(qr.ageSeconds / 60)} 分钟前）`) : '未生成'}`;
-  const napcatStop = document.getElementById('napcatStopBtn');
-  napcatStop.disabled = !managed;
-  napcatStop.title = managed ? '结束 NapCat 加载器（taskkill /T 会连带其 QQ 子进程）' : '未检测到 NapCat，按钮已禁用以免误杀个人 QQ';
+    `个人 QQ 客户端：${qqClients.length} 个（<b>控制台不会结束它们</b>）｜被注入的那个 QQ 走 Waylay 端口行识别（13000）`;
+  // ── Waylay（v0.8.0 起唯一的后端）──
+  const waylay = status.waylay || {};
+  renderWaylay(waylay);
+  const waylayStop = document.getElementById('waylayStopBtn');
+  if (waylayStop) {
+    waylayStop.disabled = waylay.listening !== true;
+    waylayStop.title = waylay.listening === true
+      ? `会结束 ${waylay.process || 'QQ'}#${waylay.pid}（唯一监听 ${waylay.port} 的进程；你自己开的 QQ 不监听它，不会被打到）`
+      : 'Waylay 未运行，无需停止';
+  }
   const hostLink = document.getElementById('hostLink');
   if (status.hostUrl && host?.listening) { hostLink.href = status.hostUrl; hostLink.style.display = ''; }
   else hostLink.style.display = 'none';
-  // 注意：napcatLink 的 href 由上面「QQ助手账号按钮」那段统一负责（含带 token 的升级），
-  // 这里**不要**再写一遍不带 token 的地址——那样每 4 秒就会把带 token 的链接覆盖掉，
-  // 用户点到的永远是「token 无效」那个（v0.5.9 全面检测发现）。
   document.getElementById('stamp').textContent = '刷新于 ' + new Date(status.scannedAt || Date.now()).toLocaleTimeString('zh-CN', { hour12: false });
   const warnings = status.warnings || [];
   const warnCard = document.getElementById('warnCard');
   warnCard.style.display = warnings.length ? '' : 'none';
   document.getElementById('warns').innerHTML = warnings.map((w) => '· ' + w).join('<br>');
-  if (warnings.length) revealGroup(warnCard);
+  // warnCard 就在概览页里，回到概览自然看得见；不再 revealGroup（会抢当前页）
   const cfg = status.config || {};
   if (document.activeElement?.tagName !== 'INPUT') {
     document.getElementById('cfgCwd').value = cfg.cwd || '';
     document.getElementById('cfgDshBin').value = cfg.dshBin || '';
-    document.getElementById('cfgNapcatBat').value = cfg.napcatBat || '';
+    document.getElementById('cfgWaylayBat').value = cfg.waylayBat || '';
+    document.getElementById('cfgWaylayUin').value = cfg.waylayUin || '';
     document.getElementById('cfgTtsBat').value = cfg.ttsBat || '';
   }
 }
@@ -735,7 +1011,8 @@ async function saveConfig() {
   const result = await api('/api/config', { method: 'POST', body: JSON.stringify({
     cwd: document.getElementById('cfgCwd').value,
     dshBin: document.getElementById('cfgDshBin').value,
-    napcatBat: document.getElementById('cfgNapcatBat').value,
+    waylayBat: document.getElementById('cfgWaylayBat').value,
+    waylayUin: document.getElementById('cfgWaylayUin').value,
     ttsBat: document.getElementById('cfgTtsBat').value,
   }) });
   toast((result.ok ? '✅ ' : '⚠️ ') + result.reason);
@@ -757,6 +1034,7 @@ async function refresh() {
   try {
     const status = await api('/api/status');
     render(status);
+    renderCtl(status);
     lastRuntime = status.runtime ?? null;
     renderRuntime(status.runtime ?? null, status);
     renderInboxMeta();
@@ -764,6 +1042,14 @@ async function refresh() {
   } catch (e) {
     setConnOk(false, e.message);
   }
+}
+// 总控页的状态行：复用 /api/status 里的端口快照，一行看全谁在跑
+function renderCtl(status) {
+  const el = document.getElementById('ctlStatus');
+  if (!el) return;
+  const rows = (status?.ports ?? []).map((p) =>
+    `${p.listening ? '🟢' : '⚪'} ${p.label || p.name}（${p.port}）`);
+  el.textContent = rows.length ? rows.join('　') : '（还没有端口快照）';
 }
 function setConnOk(ok, detail = '') {
   const pill = document.getElementById('connPill');
@@ -843,7 +1129,8 @@ function focusCard(id) {
   const el = document.getElementById(id);
   if (!el) return;
   // 验收台的「去看 →」可能指向折叠分组里的卡片：不先展开，scrollIntoView 会滚到一片空白
-  const group = revealGroup(el);
+  // 验收台的「去看」是用户主动点击：这才允许切页
+  const group = revealGroup(el, { activate: true });
   const jump = () => {
     el.scrollIntoView({ behavior: 'smooth', block: 'center' });
     const card = el.closest('section') || el;
@@ -892,6 +1179,32 @@ async function loadInbox(force = false) {
   }
 }
 function escapeHtml(text) { return String(text ?? '').replace(/[&<>]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[c])); }
+
+/**
+ * Waylay 状态行。
+ *
+ * 刻意把「端口在听」和「会话就绪」分开显示 —— 实测过它们会分离：
+ * 被顶号重登后端口一直在听、logged_in 却是 false，发消息回 1006501 网络连接异常。
+ * 只显示"运行中"会让人以为一切正常。
+ */
+function renderWaylay(w) {
+  const box = document.getElementById('waylayStatus');
+  if (!box) return;
+  if (!w || !w.bat) {
+    box.innerHTML = '⚪ <b>未配置 Waylay 入口</b>：在下面「路径配置」里填 rin-waylay.bat 的路径（或填它所在目录）。';
+    return;
+  }
+  const dot = w.level === 'ok' ? '🟢' : w.level === 'warn' ? '🟡' : '⚪';
+  const bits = [`${dot} ${escapeHtml(w.text || '')}`];
+  if (w.loggedIn === true && w.uin) bits.push(`QQ <b>${escapeHtml(w.uin)}</b>${w.nickname ? '（' + escapeHtml(w.nickname) + '）' : ''}`);
+  if (Number.isFinite(w.reverseClients)) bits.push(`桥连接 ${w.reverseClients}`);
+  if (Number.isFinite(w.uptimeSec) && w.uptimeSec > 0) bits.push(`已运行 ${Math.floor(w.uptimeSec / 60)} 分`);
+  box.innerHTML = bits.join(' ｜ ');
+  const paths = document.getElementById('waylayPaths');
+  if (paths) paths.innerHTML = `日志 <code>${escapeHtml(w.logPath || '')}</code>`;
+  const qrLink = document.getElementById('waylayQrLink');
+  if (qrLink) qrLink.style.opacity = w.listening ? '1' : '0.45';
+}
 function escapeAttr(text) { return escapeHtml(text).replace(/"/g, '&quot;'); }
 function replayOne(index) { replayEntries({ indices: [index] }); }
 function replayRecent(limit) {
@@ -1128,6 +1441,59 @@ async function replayDiff() {
   }
 }
 
+// ── 未登录扫码浮层 ──
+// 复用 /api/qr（Waylay 出的 qrcode.png）。服务端只回过期不了的新码，
+// 这里 5 秒跟进一次：Waylay 一写出新码，图上就换成最新的（失效的码不显示）。
+// 它只是浮层：不切页、不滚屏，关掉后本轮不再自动弹。
+let qrModalTimer = null;
+async function refreshQrModal() {
+  const img = document.getElementById('qrModalImg');
+  const hint = document.getElementById('qrModalHint');
+  if (!img || !hint) return;
+  try {
+    const r = await api('/api/qr');
+    if (r.ok !== true) { hint.textContent = '⚠️ ' + (r.reason || '二维码不可用'); return; }
+    if (r.dataUrl) { img.src = r.dataUrl; img.style.display = ''; } else { img.style.display = 'none'; }
+    const ago = r.exists ? (r.ageSeconds >= 60 ? Math.round(r.ageSeconds / 60) + ' 分钟前' : r.ageSeconds + ' 秒前') : '—';
+    hint.textContent = !r.exists
+      ? '⏳ 还没有二维码：Waylay 刚启动时出码要几秒，这里会自动换上'
+      : (r.dataUrl ? `✅ 二维码 ${ago}生成 · 用手机 QQ 扫一下` : `⏳ 等待新二维码（${ago}那张已过期，不显示）`);
+    if (r.hint) hint.textContent += ' · ' + r.hint;
+  } catch (error) {
+    hint.textContent = '⚠️ ' + error.message;
+  }
+}
+function openQrModal() {
+  const el = document.getElementById('qrModal');
+  if (!el || !el.classList.contains('off')) return;
+  el.classList.remove('off');
+  refreshQrModal();
+  qrModalTimer = setInterval(refreshQrModal, 5000);
+}
+// 「刷新二维码」= 让 Waylay 主动重新出码（/api/refresh-qr → QQ 的 requestQRCode），
+// 不是重读旧文件——旧文件不会因为读一次就变新（用户实测：点了没用）。
+async function refreshQrNow() {
+  const hint = document.getElementById('qrModalHint');
+  const state = document.getElementById('qrState');
+  const msg = '正在让 Waylay 重新出码…';
+  if (hint) hint.textContent = msg;
+  if (state) state.textContent = msg;
+  try {
+    const r = await api('/api/qr/refresh', { method: 'POST' });
+    toast((r.ok ? '✅ ' : '⚠️ ') + r.reason);
+    // 出码到写文件有 1～3 秒延迟，等一下再读，避免又读到旧文件
+    setTimeout(() => { refreshQrModal(); loadQr(); }, 2500);
+  } catch (error) {
+    toast('⚠️ ' + error.message);
+  }
+}
+function closeQrModal(byUser = false) {
+  if (byUser) qrModalDismissed = true;
+  const el = document.getElementById('qrModal');
+  if (el) el.classList.add('off');
+  if (qrModalTimer) { clearInterval(qrModalTimer); qrModalTimer = null; }
+}
+
 async function loadQr() {
   const img = document.getElementById('qrImg');
   const hint = document.getElementById('qrHint');
@@ -1222,6 +1588,50 @@ if (streamMode !== 'off') {
   setInterval(() => { if (!document.hidden && groupOpen('gData')) loadJobs(); }, 20000);
   setInterval(() => { if (!document.hidden && groupOpen('gData')) loadGroups(); }, 30000);
 }
+</script>
+</div>
+<script>
+// ── 侧栏导航：独立页面模式 ──
+// 菜单仍从分组自动生成（加组不用改这里），但点一下 = 切到那一页：
+// 同屏只显示一个分组（.page-on），不再是「全部展开 + 平滑滚动」。
+// 程序化赋 .open 会正常触发 toggle 事件，所以「切到该页才加载」的懒加载不受影响；
+// 离开页面时该组收起，已有的轮询（groupOpen('gData') 之类）也自然暂停。
+(() => {
+  const ICONS = { gControl: '⏻', gOverview: '◎', gLive: '⚡', gDiag: '🩺', gData: '🗂', gLogin: '🔑' };
+  const menu = document.getElementById('menu');
+  if (!menu) return;
+  const groups = [...document.querySelectorAll('details.group')];
+  const links = groups.map((g) => {
+    const label = (g.querySelector('summary')?.childNodes[0]?.textContent || g.id).trim();
+    const a = document.createElement('a');
+    a.href = '#' + g.id;
+    const ico = document.createElement('span'); ico.className = 'ico'; ico.textContent = ICONS[g.id] || '·';
+    const txt = document.createElement('span'); txt.textContent = label;
+    a.append(ico, txt);
+    a.addEventListener('click', (event) => {
+      event.preventDefault();
+      showPage(g.id);
+    });
+    menu.appendChild(a);
+    return a;
+  });
+  function showPage(id) {
+    const target = groups.find((g) => g.id === id) ?? groups[0];
+    if (!target) return;
+    for (const g of groups) {
+      const on = g === target;
+      g.classList.toggle('page-on', on);
+      g.open = on;
+    }
+    links.forEach((a) => a.classList.toggle('active', a.getAttribute('href') === '#' + target.id));
+    history.replaceState(null, '', '#' + target.id);
+    window.scrollTo({ top: 0 });
+  }
+  // revealGroup（错误/警告自动可见、验收台「去看」）靠它切页
+  window.__showPage = showPage;
+  const wanted = location.hash.replace('#', '');
+  showPage(groups.some((g) => g.id === wanted) ? wanted : groups[0]?.id);
+})();
 </script>
 </body>
 </html>

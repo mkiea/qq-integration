@@ -86,6 +86,9 @@ const config = Config({
   ttsEnabled: false,
   sttEnabled: false,
   keywordEnabled: true,
+  // 娱乐包总开关（2026-10-31 起默认关）：这些用例测的是功能本身，所以显式打开。
+  // 「总开关关着时不响应」由 config-unit 单独钉住，不要在这里顺手测。
+  funEnabled: true,
   fortuneEnabled: true,
   diceEnabled: true,
   pointsEnabled: true,

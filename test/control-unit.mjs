@@ -3,16 +3,16 @@
  * every side effect is injected, and the server is exercised with real requests
  * against a stubbed supervisor).
  */
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { DEFAULT_PORTS, PORT_LABELS, configWarnings, detectDshBin, detectPaths, loadControlConfig, saveControlConfig } from '../control/lib/config.mjs'
 import {
-  NAPCAT_LOADER_NAMES, QR_STALE_SECONDS, assertKillAllowed, createSupervisor, extractHostUrl, inspect,
-  killTree, napcatLaunchCommand, napcatRestartCommand, parseNetstat, parseTasklist,
-  portOf, publicConfig, qrStatus, run, spawnElevated, startDetached, summarizePorts, tailLines,
+  QR_STALE_SECONDS, assertKillAllowed, createSupervisor, extractHostUrl, inspect,
+  killTree, parseNetstat, portOf, publicConfig, qrStatus, run, startDetached, summarizePorts, tailLines,
 } from '../control/lib/supervisor.mjs'
+import { parseTasklist } from '../lib/waylay-launch.js'
 import { createControlServer, createToken, originAllowed, readUi } from '../control/lib/server.mjs'
 import { groupsView, jobsView, perfReport } from '../control/lib/perf.mjs'
 import { BROWSER_CANDIDATES, buildOpenCommand, openPanel, pickBrowser } from '../control/lib/open.mjs'
@@ -41,14 +41,14 @@ const NETSTAT = `
   TCP    127.0.0.1:6700         0.0.0.0:0              LISTENING       25700
   TCP    127.0.0.1:6700         127.0.0.1:52344        ESTABLISHED     25700
   TCP    127.0.0.1:6099         0.0.0.0:0              LISTENING       4100
-  TCP    [::]:8799              [::]:0                 LISTENING       9001
+  TCP    [::]:18999             [::]:0                 LISTENING       9001
   UDP    0.0.0.0:5353           *:*                                    1234
 `
 const rows = parseNetstat(NETSTAT)
 check('netstat 解析出 5 条 TCP', rows.filter((row) => row.proto === 'TCP').length === 5, `rows=${rows.length}`)
 check('netstat 提取本地端口', rows.some((row) => row.localPort === 3080 && row.state === 'LISTENING' && row.pid === 25700))
 check('netstat 识别 ESTABLISHED', rows.some((row) => row.localPort === 6700 && row.state === 'ESTABLISHED'))
-check('netstat 支持 IPv6 地址', rows.some((row) => row.localPort === 8799 && row.pid === 9001))
+check('netstat 支持 IPv6 地址', rows.some((row) => row.localPort === 18999 && row.pid === 9001))
 check('netstat 忽略表头与空行', !rows.some((row) => row.pid === 0))
 
 const TASKLIST = `"node.exe","25700","Console","1","120,000 K"
@@ -96,14 +96,14 @@ check('二维码缺失安全', qrStatus(join(dir, 'none.png')).exists === false)
 // ------------------------------------------------------------------ config ----
 const configFile = join(dir, 'qq-control.json')
 const { config } = loadControlConfig(configFile, { env: {}, exists: () => false, readdir: () => [] })
-check('默认端口正确', config.ports.onebot === 6700 && config.ports.control === 8799 && config.ports.host === 3080)
+check('默认端口正确', config.ports.onebot === 6700 && config.ports.control === 8880 && config.ports.host === 3080)
 check('配置文件缺失时用探测结果', config.cwd === process.cwd() || config.cwd.length > 0, config.cwd)
 check('端口覆盖生效', loadControlConfig(configFile, { env: {}, exists: () => false, readdir: () => [] }).config.ports.onebot === 6700)
 const overridden = detectPaths({ ports: { control: 9999 } }, { env: {}, exists: () => false, readdir: () => [] })
 check('端口部分覆盖保留其余默认值', overridden.ports.control === 9999 && overridden.ports.onebot === 6700)
 check('nodeExe 默认指向当前 node', overridden.nodeExe === process.execPath)
 check('配置可保存并回读', (() => {
-  const ok = saveControlConfig(configFile, { ports: { control: 8799, host: 3080, onebot: 6700, napcat: 6099, tts: 9880 }, cwd: 'D:\\qq-bridge-work' })
+  const ok = saveControlConfig(configFile, { ports: { control: 8880, host: 3080, onebot: 6700, waylay: 13000, tts: 9880 }, cwd: 'D:\\qq-bridge-work' })
   const back = JSON.parse(readFileSync(configFile, 'utf8'))
   return ok && back.cwd === 'D:\\qq-bridge-work' && back.ports.onebot === 6700
 })())
@@ -116,27 +116,32 @@ const detected = detectDshBin({
 check('npx 缓存探测返回候选 bin.js', detected.includes('@deepseek-ai') && detected.includes('bin.js'), detected)
 check('npx 缓存为空时返回空串', detectDshBin({ roots: [], readdir: () => [], exists: () => false }) === '')
 
-const warnings = configWarnings({ ports: { control: 8799 }, nodeExe: process.execPath, dshBin: 'C:/nope/bin.js', napcatBat: '', cwd: '' })
-check('配置提醒：缺 dsh bin / napcat / cwd', warnings.some((w) => w.includes('dsh bin.js')) && warnings.some((w) => w.includes('NapCat')) && warnings.some((w) => w.includes('工作目录')), warnings.join(' | '))
+const warnings = configWarnings({ ports: { control: 8880 }, nodeExe: process.execPath, dshBin: 'C:/nope/bin.js', waylayBat: '', cwd: '' })
+check('配置提醒：缺 dsh bin / waylay 入口 / cwd', warnings.some((w) => w.includes('dsh bin.js')) && warnings.some((w) => w.includes('Waylay 入口')) && warnings.some((w) => w.includes('工作目录')), warnings.join(' | '))
 check('配置提醒：非法端口', configWarnings({ ports: { onebot: 70000 }, nodeExe: process.execPath }).some((w) => w.includes('端口配置非法')))
 
 // ----------------------------------------------------------------- guards ----
 const snapshot = {
   ports: summarizePorts(rows, tasks, DEFAULT_PORTS, PORT_LABELS),
   processes: {
-    napcat: [{ pid: 4100, name: 'QQ.exe' }],
-    napcatLoaders: [{ pid: 4100, name: 'NapCatWinBootMain.exe' }],
     qqClients: [{ pid: 4100, name: 'QQ.exe' }, { pid: 4200, name: 'QQ.exe' }],
-    napcatManaged: true,
     tts: [],
   },
 }
 check('允许杀掉占用受管端口的进程', assertKillAllowed(25700, { snapshot, ports: DEFAULT_PORTS }).ok === true)
-check('允许杀掉 NapCat 加载器', assertKillAllowed(4100, { snapshot, ports: DEFAULT_PORTS }).ok === true)
+check('v0.8.0：6099 退出受管列表后，不占受管端口的 QQ 一律拒绝', assertKillAllowed(4100, { snapshot, ports: DEFAULT_PORTS }).ok === false, assertKillAllowed(4100, { snapshot, ports: DEFAULT_PORTS }).reason)
 check('拒绝按名字杀个人 QQ 客户端', assertKillAllowed(4200, { snapshot, ports: DEFAULT_PORTS }).ok === false, assertKillAllowed(4200, { snapshot, ports: DEFAULT_PORTS }).reason)
 check('拒绝杀掉无关 PID', assertKillAllowed(12345, { snapshot, ports: DEFAULT_PORTS }).ok === false, assertKillAllowed(12345, { snapshot, ports: DEFAULT_PORTS }).reason)
 check('拒绝杀掉控制台自身', assertKillAllowed(process.pid, { snapshot, ports: DEFAULT_PORTS }).ok === false)
 check('拒绝非法 PID', assertKillAllowed('abc', { snapshot }).ok === false && assertKillAllowed(-1, { snapshot }).ok === false)
+// 「绝不按镜像名杀」铁律的源码级回归（v0.8.0 后唯一载体：NapCat 垫片已随代码退场）。
+const supervisorSource = readFileSync(join(here0, '..', 'control', 'lib', 'supervisor.mjs'), 'utf8')
+check('★supervisor 源码里绝不出现 taskkill /IM（按名杀会误杀个人 QQ）', !/taskkill \/IM/.test(supervisorSource))
+// ★ 一次性参数不许持久化：2026-10-30 事故是 `--port 18881` 被写进 qq-control.json，
+// 之后桌面启动器照旧开 8880 ⇒ 页面 ERR_CONNECTION_REFUSED（排查很久才发现）。
+const binSource = readFileSync(join(here0, '..', 'control', 'bin', 'qq-control.mjs'), 'utf8')
+check('★CLI 不把 --port 覆盖写回配置文件',
+  /diskControlPort/.test(binSource) && !/saveControlConfig\(configFile, config\)/.test(binSource), 'bin')
 
 // ------------------------------------------------------------- supervisor ----
 const okExec = (command, args, options, callback) => {
@@ -144,13 +149,40 @@ const okExec = (command, args, options, callback) => {
   const output = command === 'netstat' ? NETSTAT : TASKLIST
   done(null, output, '')
 }
-const supervisor = createSupervisor({ ...config, cwd: dir, logs: { hostOut: logFile, hostErr: join(dir, 'err.log'), bridge: join(dir, 'bridge.log') } }, { exec: okExec })
+const supervisor = createSupervisor(
+  { ...config, cwd: dir, logs: { hostOut: logFile, hostErr: join(dir, 'err.log'), bridge: join(dir, 'bridge.log') } },
+  // fetchJson 注入成"永远失败"：否则 status() 会真的去打 13000，测试结果就取决于
+  // 这台机器上恰好有没有服务在跑——那种测试等于没测。
+  { exec: okExec, fetchJson: async () => ({ ok: false, json: null, reason: 'test-stub' }) }
+)
 const status = await supervisor.status()
-check('supervisor.status 汇总端口', status.ports.length === 5 && status.ports.some((item) => item.port === 6700 && item.listening))
+// v0.8.0：napcat(6099) 退场、waylay(13000) 进场，共 5 条
+check('supervisor.status 汇总端口', status.ports.length === 5 && status.ports.some((item) => item.port === 6700 && item.listening) && status.ports.some((item) => item.port === 13000), `ports=${status.ports.length}`)
 check('supervisor.status 识别机器人在线', status.botOnline === true)
 check('supervisor.status 附带 3080 控制台链接', status.hostUrl.includes('token='))
 check('supervisor.status 附带配置与提醒', typeof status.config.cwd === 'string' && Array.isArray(status.warnings))
 check('logFile 映射正确', supervisor.logFile('hostOut') === logFile && supervisor.logFile('bridge').endsWith('bridge.log') && supervisor.logFile('unknown') === '')
+
+/**
+ * ★白名单差集必须原样透传到面板（2026-10-30「新加白名单好友好像没有创建新对话」）。
+ * 桥只在收到消息时建会话，所以"已放行、还没说过话"这件事只能由快照里的差集表达；
+ * 控制台这一层要是漏透传，面板就永远不显示，用户只能得出"白名单没生效"这个错误结论。
+ */
+writeFileSync(join(dir, 'qq-runtime.json'), JSON.stringify({
+  updatedAt: Date.now(), pid: 1, version: 'test', uptimeSeconds: 60,
+  sessions: [], sessionCount: 0,
+  whitelistPending: { users: [12340001], groups: [12340002] },
+}), 'utf8')
+// 注意：上面那个 supervisor 的 `logs` 被整份替换过（只留 hostOut/hostErr/bridge），
+// `logs.runtime` 因此是空串、`runtime()` 读不到快照。这里单独造一个只指 runtime 的实例。
+const runtimeSup = createSupervisor(
+  { ...config, cwd: dir, logs: { runtime: join(dir, 'qq-runtime.json') } },
+  { exec: okExec, fetchJson: async () => ({ ok: false, json: null, reason: 'test-stub' }) }
+)
+const runtimeView = runtimeSup.runtime()
+check('运行快照透传「白名单已放行、还没说过话」差集',
+  JSON.stringify(runtimeView?.whitelistPending) === JSON.stringify({ users: [12340001], groups: [12340002] }),
+  JSON.stringify(runtimeView?.whitelistPending ?? '(没有透传)'))
 
 const busyExec = (command, args, options, callback) => {
   const done = typeof options === 'function' ? options : callback
@@ -169,12 +201,57 @@ check('未监听端口无需释放', notListening.ok === false && notListening.r
 
 const noBin = createSupervisor({ ...config, dshBin: '', nodeExe: '' }, { exec: okExec })
 check('缺 dshBin 时 startHost 明确报错', (await noBin.startHost()).reason.includes('dshBin'))
-const noNapcat = createSupervisor({ ...config, napcatBat: '' }, { exec: okExec })
-check('缺 napcatBat 时 startNapcat 明确报错', (await noNapcat.startNapcat()).reason.includes('napcatBat'))
-const missingNapcat = createSupervisor({ ...config, napcatBat: join(dir, 'none.bat') }, { exec: okExec, exists: () => false })
-check('napcatBat 不存在时明确报错', (await missingNapcat.startNapcat()).reason.includes('不存在'))
+const noWaylay = createSupervisor({ ...config, waylayBat: '' }, { exec: okExec })
+check('缺 waylayBat 时 startWaylay 明确报错', (await noWaylay.startWaylay()).reason.includes('waylayBat'))
+const missingWaylay = createSupervisor({ ...config, waylayBat: join(dir, 'none.bat') }, { exec: okExec, exists: () => false })
+check('waylayBat 不存在时明确报错', (await missingWaylay.startWaylay()).reason.includes('不存在'))
 
-// 个人 QQ 在跑但 NapCat 没跑 → 绝不能杀
+// ── Waylay 单实例锁（2026-10-30 实测：连点「一键启动」会注入出好几个 QQ 抢同一个号）──
+// 13000 在扫码/登录阶段不监听的，所以端口判据拦不住重复点击，必须靠锁文件。
+const lockDir = join(dir, 'waylay-lock')
+mkdirSync(lockDir, { recursive: true })
+const lockBat = join(lockDir, 'rin-waylay.bat')
+writeFileSync(lockBat, '@echo off\r\n', 'utf8')
+const lockFile = join(lockDir, '.waylay-launch.json')
+const lockExec = (command, args, options, callback) => {
+  const done = typeof options === 'function' ? options : callback
+  if (command === 'netstat') return done(null, '  TCP    127.0.0.1:3080    0.0.0.0:0    LISTENING    555\n', '')
+  return done(null, '"node.exe","555","Console","1","1 K"\n', '')
+}
+let lockSpawns = 0
+const lockSup = createSupervisor(
+  { ...config, cwd: dir, waylayBat: lockBat, waylayUin: '10001', logs: {} },
+  { exec: lockExec, spawnImpl: () => { lockSpawns += 1; return { pid: 9100 + lockSpawns, unref() {} } } }
+)
+const firstLaunch = await lockSup.startWaylay()
+const secondLaunch = await lockSup.startWaylay()
+check('Waylay 单实例锁：首次启动成功并落锁',
+  firstLaunch.ok === true && lockSpawns === 1 && existsSync(lockFile), JSON.stringify(firstLaunch))
+check('Waylay 单实例锁：5 分钟内重复启动被拒（不会多开出 QQ）',
+  secondLaunch.ok === false && secondLaunch.launching === true && secondLaunch.reason.includes('还没完成') && lockSpawns === 1,
+  JSON.stringify(secondLaunch))
+const stopClears = await lockSup.stopWaylay()
+check('「停止 Waylay」连带清掉启动锁（等于放弃这次启动）',
+  stopClears.ok === false && !existsSync(lockFile), JSON.stringify(stopClears))
+const thirdLaunch = await lockSup.startWaylay()
+check('锁清掉后可以重新启动', thirdLaunch.ok === true && lockSpawns === 2, JSON.stringify(thirdLaunch))
+
+// 「刷新二维码」必须是真动作：打 Waylay 的 /api/refresh-qr（让它主动 requestQRCode），
+// 而不是重读 qrcode.png（用户原话：「刷新二维码其实不管用」）。
+let qrRefreshUrl = ''
+const qrRefreshSup = createSupervisor({ ...config }, { exec: okExec, fetchJson: async (url) => { qrRefreshUrl = url; return { ok: true, json: { ok: true } } } })
+const qrRefreshOk = await qrRefreshSup.refreshQr()
+check('refreshQr 打的是 Waylay /api/refresh-qr',
+  qrRefreshOk.ok === true && qrRefreshUrl.endsWith('/api/refresh-qr') && qrRefreshOk.reason.includes('重新出码'),
+  `${qrRefreshUrl} | ${qrRefreshOk.reason}`)
+const qrRefreshDown = await createSupervisor({ ...config }, { exec: okExec, fetchJson: async () => ({ ok: false, json: null, reason: 'ECONNREFUSED' }) }).refreshQr()
+check('refreshQr 在 Waylay 没跑时给可操作提示',
+  qrRefreshDown.ok === false && qrRefreshDown.reason.includes('13000'), qrRefreshDown.reason)
+const qrRefreshRefused = await createSupervisor({ ...config }, { exec: okExec, fetchJson: async () => ({ ok: true, json: { ok: false } }) }).refreshQr()
+check('refreshQr 在 QQ 还没到登录界面时说明原因',
+  qrRefreshRefused.ok === false && qrRefreshRefused.reason.includes('登录界面'), qrRefreshRefused.reason)
+
+// 个人 QQ 在跑、Waylay 没跑（13000 没监听）→ 停止只能「没找到目标」，绝不按镜像名找 QQ
 const personalQqExec = (command, args, options, callback) => {
   const done = typeof options === 'function' ? options : callback
   if (command === 'netstat') return done(null, '  TCP    127.0.0.1:3080    0.0.0.0:0    LISTENING    555\n', '')
@@ -182,9 +259,9 @@ const personalQqExec = (command, args, options, callback) => {
 }
 const personalQq = createSupervisor({ ...config, nodeExe: process.execPath, dshBin: 'C:/dsh/bin.js', logs: {} }, { exec: personalQqExec })
 const personalStatus = await personalQq.status()
-check('识别个人 QQ 客户端但标记为不受管', personalStatus.processes.qqClients.length === 2 && personalStatus.processes.napcatManaged === false && personalStatus.processes.napcat.length === 0)
-const refusedNapcat = await personalQq.stopNapcat()
-check('拒绝结束个人 QQ 客户端', refusedNapcat.ok === false && refusedNapcat.reason.includes('个人版'), refusedNapcat.reason)
+check('识别个人 QQ 客户端（仅作保护性展示，v0.8.0 无加载器判定）', personalStatus.processes.qqClients.length === 2, JSON.stringify(personalStatus.processes.qqClients))
+const refusedWaylay = await personalQq.stopWaylay()
+check('Waylay 未监听 13000 时拒绝盲杀（目标只来自端口，不来自镜像名）', refusedWaylay.ok === false && refusedWaylay.reason.includes('没有找到监听'), refusedWaylay.reason)
 
 // 启动宿主：spawn 被替换，只检查命令构造
 let spawned = null
@@ -195,26 +272,61 @@ check('startHost 用 --no-open 启动且不弹浏览器', started.ok === true &&
 check('startHost 返回 PID', started.pid === 4242)
 check('startDetached 拒绝空命令', (() => { try { startDetached({ command: '' }); return false } catch { return true } })())
 
+// 一键启动（总控页）：Waylay 已在运行 → 跳过；宿主被拉起；未配置 TTS → 标记跳过。
+// netstat 里 13000 在听 = Waylay 已在跑，startWaylay 根本不该被调用（也就不检查 bat 是否存在）。
+let allSpawns = 0
+const allExec = (command, args, options, callback) => {
+  const done = typeof options === 'function' ? options : callback
+  if (command === 'netstat') return done(null, '  TCP    127.0.0.1:13000    0.0.0.0:0    LISTENING    700\n', '')
+  return done(null, '"node.exe","700","Console","1","1 K"\n', '')
+}
+const allStarter = createSupervisor(
+  { ...config, cwd: dir, nodeExe: 'node.exe', dshBin: 'C:/dsh/bin.js', waylayBat: join(dir, 'w.bat'), ttsBat: '', logs: { hostOut: join(dir, 'o.log'), hostErr: join(dir, 'e.log') } },
+  { exec: allExec, spawnImpl: (c, a, o) => { allSpawns += 1; return { pid: 5000 + allSpawns, unref() {} } } }
+)
+const allResult = await allStarter.startAll()
+check('startAll：Waylay 已运行则跳过、宿主被拉起、未配置 TTS 跳过不报错',
+  allResult.ok === true && allResult.steps.length === 3
+  && allResult.steps[0].name === 'Waylay' && allResult.steps[0].skipped === true
+  && allResult.steps[1].name === 'DSH 宿主' && allResult.steps[1].ok === true && allSpawns === 1
+  && allResult.steps[2].name === '本地语音' && allResult.steps[2].skipped === true,
+  JSON.stringify(allResult))
+// 单项失败不中断：这次 netstat 里 13000 没在听 → startWaylay 真的被调用，
+// 而它缺 waylayBat 会失败；宿主照常拉起、TTS 照常标记跳过，汇总 ok=false。
+const emptyExec = (command, args, options, callback) => {
+  const done = typeof options === 'function' ? options : callback
+  if (command === 'netstat') return done(null, '  TCP    127.0.0.1:9999    0.0.0.0:0    LISTENING    899\n', '')
+  return done(null, '"node.exe","899","Console","1","1 K"\n', '')
+}
+const failStarter = createSupervisor({ ...config, cwd: dir, nodeExe: 'node.exe', dshBin: 'C:/dsh/bin.js', waylayBat: '', ttsBat: '', logs: {} }, { exec: emptyExec, spawnImpl: () => ({ pid: 1, unref() {} }) })
+const failResult = await failStarter.startAll()
+check('startAll：单项失败不中断（汇总里能看到失败原因）',
+  failResult.ok === false && failResult.steps[0].ok === false && failResult.steps[0].reason.includes('waylayBat') && failResult.steps[1].ok === true,
+  JSON.stringify(failResult))
+
 // --------------------------------------------------------------- server ------
 const token = createToken()
 check('token 足够长且 URL 安全', token.length >= 20 && /^[A-Za-z0-9_-]+$/.test(token))
-check('Origin 校验：同源放行', originAllowed('http://127.0.0.1:8799', 8799) === true)
-check('Origin 校验：其他站点拒绝', originAllowed('https://evil.example', 8799) === false)
-check('Origin 校验：其它本地端口拒绝', originAllowed('http://127.0.0.1:3080', 8799) === false)
-check('Origin 校验：缺失（curl）放行给 token 把关', originAllowed(undefined, 8799) === true)
-check('Origin 校验：垃圾值拒绝', originAllowed('not-a-url', 8799) === false)
+check('Origin 校验：同源放行', originAllowed('http://127.0.0.1:8880', 8880) === true)
+check('Origin 校验：其他站点拒绝', originAllowed('https://evil.example', 8880) === false)
+check('Origin 校验：其它本地端口拒绝', originAllowed('http://127.0.0.1:3080', 8880) === false)
+check('Origin 校验：缺失（curl）放行给 token 把关', originAllowed(undefined, 8880) === true)
+check('Origin 校验：垃圾值拒绝', originAllowed('not-a-url', 8880) === false)
 
 const stubApi = {
-  status: async () => ({ ports: [], processes: { napcat: [], tts: [] }, botOnline: false, warnings: [], config: publicConfig(detected), scannedAt: Date.now() }),
+  status: async () => ({ ports: [], processes: { qqClients: [], tts: [] }, botOnline: false, warnings: [], config: publicConfig(detected), scannedAt: Date.now() }),
   logFile: () => logFile,
   startHost: async () => ({ ok: true, pid: 1, reason: '宿主已启动' }),
   stopHost: async () => ({ ok: true, reason: '宿主已停止' }),
   freePort: async (name) => ({ ok: true, reason: `已释放 ${name}` }),
-  startNapcat: async () => ({ ok: true, reason: 'napcat 启动' }),
-  stopNapcat: async () => ({ ok: true, reason: 'napcat 停止' }),
+  startWaylay: async () => ({ ok: true, reason: 'waylay 启动' }),
+  stopWaylay: async () => ({ ok: true, reason: 'waylay 停止' }),
+  waylayStatus: async () => ({ listening: true, loggedIn: true, port: 13000, level: 'ok', text: 'Waylay 在线' }),
+  refreshQr: async () => { stubApi.refreshQrCalls = (stubApi.refreshQrCalls ?? 0) + 1; return { ok: true, reason: '已让 Waylay 重新出码' } },
   startTts: async () => ({ ok: true, reason: 'tts 启动' }),
   stopTts: async () => ({ ok: true, reason: 'tts 停止' }),
   stopAll: async () => ({ ok: true, reason: '全部停止' }),
+  startAll: async () => { stubApi.startAllCalls = (stubApi.startAllCalls ?? 0) + 1; return { ok: true, reason: '一键启动', steps: [] } },
   archiveStats: async () => ({ ok: true, dir: 'X:\\qq-history', files: 2, bytes: 2048, oldest: '2026-09-01', newest: '2026-09-02', trashDirs: ['2026-09-03'] }),
   archiveSearch: async (query, options) => ({
     ok: true, query, days: options.days, limit: options.limit, chatKey: options.chatKey,
@@ -277,59 +389,16 @@ check('GET /api/qr 返回新鲜度与过期提示',
   qrBody.ok === true && qrBody.fresh === false && qrBody.ageSeconds === 520 && qrBody.hint.includes('过期'),
   JSON.stringify(qrBody))
 check('GET /api/qr 直接带出图片 dataUrl（页面不用再开一个端口）', String(qrBody.dataUrl).startsWith('data:image/png;base64,'))
-stubApi.restartNapcatLogin = async () => ({ ok: true, pid: 4242, reason: '已请求提权重启登录流程' })
-const restartBody = await (await fetch(base + '/api/napcat/restart?token=' + token, { method: 'POST', headers: { 'content-type': 'application/json' }, body: '{}' })).json()
-check('POST /api/napcat/restart 走到重启登录流程', restartBody.ok === true && restartBody.pid === 4242, JSON.stringify(restartBody))
-const noQr = await fetch(base + '/api/napcat/restart?token=wrong', { method: 'POST', body: '{}' })
-check('重启接口同样要 token', noQr.status === 401, String(noQr.status))
+const waylayBody = await (await fetch(base + '/api/waylay?token=' + token)).json()
+check('GET /api/waylay 返回 Waylay 状态（listening/loggedIn 两字段分开）', waylayBody.ok === true && waylayBody.listening === true && waylayBody.loggedIn === true, JSON.stringify(waylayBody))
+const waylayNoToken = await fetch(base + '/api/waylay')
+check('GET /api/waylay 无 token 返回 401', waylayNoToken.status === 401, String(waylayNoToken.status))
+const waylayStopNoToken = await fetch(base + '/api/waylay/stop', { method: 'POST', body: '{}' })
+check('Waylay 停止接口同样要 token', waylayStopNoToken.status === 401, String(waylayStopNoToken.status))
 
-// ---- v0.5.9：NapCat WebUI 的带 token 地址（用户报的「token 无效」就是这个坑） ----
-{
-  const noTokenRoute = await fetch(base + '/api/napcat/webui')
-  check('GET /api/napcat/webui 无 token 返回 401', noTokenRoute.status === 401, String(noTokenRoute.status))
-  stubApi.napcatWebui = async () => ({ ok: true, url: 'http://127.0.0.1:6099/webui/?token=napcat-t', reason: '' })
-  const withToken = await (await fetch(base + '/api/napcat/webui?token=' + token)).json()
-  check('带上 token 时返回的就是可直接打开的地址',
-    withToken.ok === true && withToken.url.includes('6099/webui/?token='), JSON.stringify(withToken))
-  delete stubApi.napcatWebui
-  const unsupported = await (await fetch(base + '/api/napcat/webui?token=' + token)).json()
-  check('控制台不支持该接口时如实说明（而不是 500）',
-    unsupported.ok === false && unsupported.reason.includes('不支持'), JSON.stringify(unsupported))
-}
-{
-  // supervisor 侧：从 napcatQr 推出 bootmain/config/webui.json，读出 token 拼进地址。
-  const root = mkdtempSync(join(tmpdir(), 'qq-napcat-webui-'))
-  const qrDir = join(root, 'cache')
-  const cfgDir = join(root, 'config')
-  mkdirSync(qrDir, { recursive: true })
-  mkdirSync(cfgDir, { recursive: true })
-  const qrFile = join(qrDir, 'qrcode.png')
-  writeFileSync(qrFile, Buffer.from([0x89, 0x50, 0x4e, 0x47]))
-  writeFileSync(join(cfgDir, 'webui.json'), JSON.stringify({ token: 'napcat-fake', port: 6099 }), 'utf8')
-  const sup = createSupervisor({ ...config, napcatQr: qrFile }, {})
-  const info = sup.napcatWebui()
-  check('napcatWebui 给出带 token 的 6099 地址',
-    info.ok === true && info.url === 'http://127.0.0.1:6099/webui/?token=napcat-fake', info.url)
-  check('napcatWebui 只回 ok/url/reason 三个字段（不外泄别的配置）',
-    Object.keys(info).sort().join(',') === 'ok,reason,url', Object.keys(info).join(','))
-  const none = createSupervisor({ ...config, napcatQr: '' }, {}).napcatWebui()
-  check('未配置 napcatQr 时明确拒绝并点名', none.ok === false && none.reason.includes('napcatQr'), none.reason)
-  // 换一个**没有 config/ 子目录**的 bootmain 位置，才真的触发"读不到"
-  const missing = createSupervisor({ ...config, napcatQr: join(root, 'elsewhere', 'cache', 'qrcode.png') }, {}).napcatWebui()
-  check('webui.json 读不到时给真实原因', missing.ok === false && missing.reason.includes('webui.json'), missing.reason)
-  writeFileSync(join(cfgDir, 'webui.json'), JSON.stringify({ port: 6099 }), 'utf8')
-  const noTok = sup.napcatWebui()
-  check('webui.json 没有 token 时降级为不带 token 的地址并说明原因',
-    noTok.ok === false && noTok.url.endsWith('/webui/') && noTok.reason.includes('token'), noTok.reason)
-  // 端口以 webui.json 为准（用户在 NapCat 里改过端口时，config.ports 会过时 → 死链）
-  writeFileSync(join(cfgDir, 'webui.json'), JSON.stringify({ token: 'napcat-fake', port: 7099 }), 'utf8')
-  const moved = sup.napcatWebui()
-  check('webui.json 里改过端口时用文件里的端口（否则给出死链）',
-    moved.ok === true && moved.url.includes(':7099/'), moved.url)
-  rmSync(root, { recursive: true, force: true })
-}
+// v0.8.0：NapCat WebUI 入口（6099）随 NapCat 一起退场——Waylay 的 13000 是裸 HTTP，不用拼 token。
 
-// ---- v0.5.5 三个新面板：性能 / 定时任务 / 群配置 ----
+
 const perfBody = await (await fetch(base + '/api/perf?token=' + token)).json()
 check('GET /api/perf 返回 P50/P95 与结论',
   perfBody.ok === true && perfBody.chains.count === 2 && perfBody.chains.p50 === 400 && perfBody.chains.p95 === 1000,
@@ -382,14 +451,18 @@ const logsBody = await logsResponse.json()
 check('日志接口返回内容', logsBody.ok === true && logsBody.lines.length > 0 && logsBody.lines.join('\n').includes('token='))
 const badLog = await fetch(base + '/api/logs?name=../../secret&token=' + token)
 check('日志名白名单拦截路径穿越', badLog.status === 400, String(badLog.status))
-for (const [path, needle] of [['/api/host/start', '宿主已启动'], ['/api/host/stop', '宿主已停止'], ['/api/napcat/stop', 'napcat 停止'], ['/api/tts/start', 'tts 启动'], ['/api/all/stop', '全部停止']]) {
+for (const [path, needle] of [['/api/host/start', '宿主已启动'], ['/api/host/stop', '宿主已停止'], ['/api/waylay/stop', 'waylay 停止'], ['/api/tts/start', 'tts 启动'], ['/api/all/stop', '全部停止'], ['/api/all/start', '一键启动']]) {
   const response = await fetch(base + path + '?token=' + token, { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } })
   const body = await response.json()
   check(`POST ${path}`, response.status === 200 && body.ok === true && body.reason === needle, JSON.stringify(body))
 }
+check('POST /api/all/start 走的是总控 startAll', stubApi.startAllCalls === 1, String(stubApi.startAllCalls))
+const qrRefresh = await (await fetch(base + '/api/qr/refresh?token=' + token, { method: 'POST', body: '{}', headers: { 'content-type': 'application/json' } })).json()
+check('POST /api/qr/refresh 走 Waylay 主动出码（不是重读旧文件）',
+  qrRefresh.ok === true && stubApi.refreshQrCalls === 1, JSON.stringify(qrRefresh))
 const freeResponse = await fetch(base + '/api/port/free?token=' + token, { method: 'POST', body: JSON.stringify({ name: 'onebot' }) })
 check('POST /api/port/free 透传端口名', (await freeResponse.json()).reason === '已释放 onebot')
-// 审查 G5：不在受管列表里的端口名必须拒绝（FREEABLE_PORTS = host/onebot/napcat/tts），
+// 审查 G5：不在受管列表里的端口名必须拒绝（FREEABLE_PORTS = host/onebot/waylay/tts），
 // 否则 token 持有者能借它杀掉任意占用者的进程（control 就是"别的进程"的典型）。
 for (const badName of ['control', '', 'host; rm -rf', 'unknown']) {
   const bad = await (await fetch(base + '/api/port/free?token=' + token, { method: 'POST', body: JSON.stringify({ name: badName }) })).json()
@@ -438,7 +511,7 @@ check('inspect 在假 exec 下可用', (await inspect({ ports: DEFAULT_PORTS, ex
 check('readUi 缺失文件返回提示', readUi(join(dir, 'no-ui.html')).includes('缺失'))
 
 // ------------------------------------------------------------ app window -----
-const panelUrl = 'http://127.0.0.1:8799/?token=abc'
+const panelUrl = 'http://127.0.0.1:8880/?token=abc'
 check('候选浏览器列表非空且含 msedge', BROWSER_CANDIDATES.length >= 2 && BROWSER_CANDIDATES.some((p) => p.toLowerCase().includes('msedge')), BROWSER_CANDIDATES.join(' | '))
 check('pickBrowser 命中第一个存在的', pickBrowser({ exists: (p) => p.toLowerCase().includes('chrome') }) === BROWSER_CANDIDATES.find((p) => p.toLowerCase().includes('chrome')))
 check('pickBrowser 找不到返回空串', pickBrowser({ exists: () => false }) === '')
@@ -456,70 +529,7 @@ check('openPanel 无浏览器时回退系统默认浏览器', openFallback.ok ==
 const openThrows = openPanel(panelUrl, { browser: 'C:/Edge/msedge.exe', spawnImpl: () => { throw new Error('boom') }, logger: { warn() {} } })
 check('openPanel 启动失败安全返回', openThrows.ok === false && openThrows.mode === 'app')
 
-// ---- v0.5.6：提权启动 / 登录流程重启 / 二维码（纯函数 + 护栏） ----
-// 2026-10-04 起：真正的"脏活"（cd /d、call launcher.bat、taskkill、日志重定向）写进**垫片脚本**，
-// 提权命令只执行垫片一个路径。所以断言要看"命令 + 垫片内容"合起来（shimText），别只看 args。
-const SHIM = 'C:\\QQAI\\qq-napcat-launch.cmd'
-const shimText = (plan) => `${(plan.args ?? []).join(' ')}\n${plan.shim?.content ?? ''}`
-const launch = napcatLaunchCommand('C:\\NapCat\\bootmain\\launcher.bat', { shimFile: SHIM, logFile: 'C:\\QQAI\\qq-napcat-launch.log' })
-check('napcatLaunchCommand 用 PowerShell 提权启动', launch.ok === true && launch.command === 'powershell.exe' && launch.args.includes('-Command'), JSON.stringify(launch))
-// 2026-10-04 起：**两条分支都套 `Verb='RunAs'`**——不只是为了提权，更因为 RunAs 会把进程从我们的
-// 进程树里摘出去（AppInfo 拉起），否则宿主一退出 NapCat 会被一起带走（真机踩过）。
-// 标记（QAI-ELEVATED / QAI-RUNAS）现在只表示"宿主本来是不是管理员"。
-check('napcatLaunchCommand 会提权（RunAs）并标出宿主分支',
-  launch.args.join(' ').includes("Verb = 'RunAs'") && launch.args.join(' ').includes('QAI-RUNAS')
-  && launch.args.join(' ').includes('QAI-ELEVATED') && launch.args.join(' ').includes('IsInRole'),
-  launch.args.join(' ').slice(-180))
-check('★提权命令只把垫片路径交给 cmd（不允许再塞复杂内层命令 —— 真机上引号会被打乱、压根不执行）',
-  launch.args.join(' ').includes(`ArgumentList = @('/c','${SHIM}')`) && !/&&|>>|taskkill|call "/.test(launch.args.join(' ')),
-  launch.args.join(' ').slice(-170))
-check('napcatLaunchCommand 垫片里用 call + 引号包住（括号路径不会被 cmd 剥引号）',
-  shimText(launch).includes('call "C:\\NapCat\\bootmain\\launcher.bat"'), shimText(launch))
-check('napcatLaunchCommand 垫片里先 cd /d 到脚本所在目录（提权后 %cd% 会跑到 System32）',
-  shimText(launch).includes('cd /d "C:\\NapCat\\bootmain"'), shimText(launch))
-check('napcatLaunchCommand 垫片里把输出重定向到日志（提权窗口是隐藏的，报错要留痕）',
-  shimText(launch).includes('>> "C:\\QQAI\\qq-napcat-launch.log" 2>&1'), shimText(launch))
-check('napcatLaunchCommand 空路径 → 明确拒绝', napcatLaunchCommand('').ok === false && napcatLaunchCommand('').reason.includes('napcatBat'))
-check('napcatLaunchCommand 没给垫片路径 → 明确拒绝（不许退回"复杂命令直接传"那条踩过的路）',
-  napcatLaunchCommand('C:\\NapCat\\bootmain\\launcher.bat').ok === false
-  && napcatLaunchCommand('C:\\NapCat\\bootmain\\launcher.bat').reason.includes('shimFile'))
-
-const restart = napcatRestartCommand('C:\\NapCat\\bootmain\\launcher.bat', [11460, 11461], { shimFile: SHIM, logFile: 'C:\\QQAI\\qq-napcat-launch.log' })
-check('napcatRestartCommand 按 PID 清理（不发 taskkill /IM）',
-  restart.ok === true && shimText(restart).includes('taskkill /PID 11460 /T /F') && shimText(restart).includes('taskkill /PID 11461 /T /F'),
-  shimText(restart).slice(0, 240))
-// 审查 S1 的核心回归：绝不能按镜像名杀 QQ —— 那会把用户自己开着的 QQ 一起杀掉
-check('绝不出现 taskkill /IM（按名杀会误杀个人 QQ）', !/taskkill \/F \/IM|taskkill \/IM/.test(shimText(restart)), shimText(restart).slice(0, 240))
-check('绝不出现 QQ.exe 字样', !/QQ\.exe/i.test(shimText(restart)), shimText(restart).slice(0, 200))
-check('加载器名单只含 NapCat 系进程，不含 QQ',
-  NAPCAT_LOADER_NAMES.every((name) => !/^qq\.exe$/i.test(name)) && NAPCAT_LOADER_NAMES.some((name) => name.includes('napcat')),
-  JSON.stringify(NAPCAT_LOADER_NAMES))
-check('restartNapcatCommand 没有 PID 时拒绝执行（不退回按名杀）',
-  napcatRestartCommand('C:\\NapCat\\launcher.bat', [], { shimFile: SHIM }).ok === false
-  && napcatRestartCommand('C:\\NapCat\\launcher.bat', [], { shimFile: SHIM }).reason.includes('PID'),
-  napcatRestartCommand('C:\\NapCat\\launcher.bat', [], { shimFile: SHIM }).reason)
-check('napcatRestartCommand 清理后仍会启动 launcher.bat', shimText(restart).includes('call "C:\\NapCat\\bootmain\\launcher.bat"'))
-// 回归：清理与启动必须落在**同一个提权进程**里（都写在同一个垫片里），否则非提权的 taskkill 杀不掉提权拉起的 QQ
-const restartShim = restart.shim.content
-check('清理与启动在同一个垫片里（不是只把启动提权）',
-  restartShim.indexOf('taskkill') < restartShim.indexOf('launcher.bat')
-  && restartShim.includes('cd /d "C:\\NapCat\\bootmain"'),
-  restartShim.slice(0, 240))
-check('提权命令里只有一次 Start-Process（不会"没杀掉又拉一个"）',
-  ((restart.args.join(' ').match(/Start-Process /g) ?? []).length) === 1, String((restart.args.join(' ').match(/Start-Process /g) ?? []).length))
-// 审查 G1/G2：cmd 的引号剥离规则 + PowerShell 单引号转义
-check('启动命令用 call "<path>"（括号路径不会被 cmd 剥引号）',
-  launch.shim.content.includes('call "C:\\NapCat\\bootmain\\launcher.bat"'), launch.shim.content)
-check('提权命令里的 /c 只带垫片路径（内层命令一律走垫片文件，别塞回命令行）',
-  launch.args.join(' ').includes(`@('/c','${SHIM}')`) && !launch.args.join(' ').includes('&&')
-  && !launch.args.join(' ').includes('2>&1'), launch.args.join(' ').slice(0, 240))
-const quoted = napcatLaunchCommand("D:\\O'Brien\\napcat.bat", { shimFile: "D:\\O'Brien\\qq-napcat-launch.cmd" })
-check('路径含单引号时 PowerShell 单引号成对转义（否则脚本解析失败）',
-  quoted.ok === true && quoted.args[4].includes("D:\\O''Brien\\qq-napcat-launch.cmd")
-  && quoted.shim.content.includes("cd /d \"D:\\O'Brien\""),
-  `${quoted.args[4].match(/FilePath = .*?;/)?.[0]} ｜ ${quoted.shim.content.split('\r\n')[2]}`)
-check('restartNapcatLogin 是 supervisor 的方法', typeof createSupervisor({ ...config, cwd: dir, napcatBat: 'C:\\NapCat\\bootmain\\launcher.bat' }, {}).restartNapcatLogin === 'function')
-check('napcatRestartCommand 空路径 → 拒绝', napcatRestartCommand('').ok === false)
+// v0.8.0：提权垫片与 NapCat 启动/重启命令随 NapCat 退场，相关纯函数断言一并移除。
 
 check('qrStatus 新鲜判定用 QR_STALE_SECONDS',
   qrStatus('x', 1000, { stat: () => ({ mtimeMs: 1000 - (QR_STALE_SECONDS - 1) * 1000 }) }).fresh === true
@@ -530,157 +540,27 @@ check('qrStatus 新鲜判定用 QR_STALE_SECONDS',
   const qrDir = mkdtempSync(join(tmpdir(), 'qq-qr-test-'))
   const qrFile = join(qrDir, 'qrcode.png')
   writeFileSync(qrFile, Buffer.from('89504e470d0a1a0a', 'hex'))
-  const sup = createSupervisor({ ...config, cwd: qrDir, napcatQr: qrFile, napcatBat: 'C:\\NapCat\\bootmain\\launcher.bat' }, { now: () => Date.now() })
+  const batFile = join(qrDir, 'rin-waylay.bat')
+  writeFileSync(batFile, 'rem stub', 'utf8')
+  const sup = createSupervisor({ ...config, cwd: qrDir, waylayBat: batFile }, { now: () => Date.now() })
   const fresh = await sup.qr()
   check('supervisor.qr 返回 dataUrl 与提示', fresh.ok === true && fresh.dataUrl.startsWith('data:image/png;base64,') && fresh.hint.length > 0, JSON.stringify({ exists: fresh.exists, hint: fresh.hint }))
-  const missing = await createSupervisor({ ...config, cwd: qrDir, napcatQr: join(qrDir, 'nope.png') }, {}).qr()
+  // 过期码不给图：用户拍板「失效的没啥用」——旧码扫了只会失败，还让人以为登录坏了
+  const oldTime = new Date(Date.now() - (QR_STALE_SECONDS + 120) * 1000)
+  utimesSync(qrFile, oldTime, oldTime)
+  const stale = await sup.qr()
+  check('supervisor.qr 过期码不返回图片（只说明在等新码）',
+    stale.ok === true && stale.dataUrl === '' && stale.fresh === false && stale.hint.includes('过期'),
+    JSON.stringify({ dataUrl: Boolean(stale.dataUrl), hint: stale.hint }))
+  const missing = await createSupervisor({ ...config, cwd: qrDir, waylayBat: join(qrDir, 'nope', 'x.bat') }, {}).qr()
   check('supervisor.qr 没有文件时给中文说明而不是报错',
     missing.ok === true && missing.exists === false && missing.dataUrl === '' && missing.hint.includes('没有二维码'),
     missing.hint)
   rmSync(qrDir, { recursive: true, force: true })
 }
 
-/**
- * ★ issue #2 的核心回归（2026-10-16 用户报：「我在工作台里填了那个脚本，又说缺少垫片脚本路径(shimFile)，
- *   我在文件夹找了好几遍都没找到这个 shimFile 在哪」）：
- *   `startNapcat` / `restartNapcatLogin` 原来调 `napcatLaunchCommand(chosen.path)` **一个参数都没传**，
- *   于是每次点「启动 NapCat」都命中 `launchPlan` 的 shimFile 判据 ⇒ 控制台里这个按钮**从来就没成功过**。
- *   现在：垫片路径与日志路径都从工作目录推、垫片先落盘、再执行提权命令、最后**等心跳**。
- */
-{
-  const shimDir = mkdtempSync(join(tmpdir(), 'qq-shim-test-'))
-  const shimFile = join(shimDir, 'qq-napcat-launch.cmd')
-  const logFile = join(shimDir, 'qq-napcat-launch.log')
-  const written = []
-  // 日志 mtime 桩：点击之前是 5 秒前的旧文件，**垫片真的跑起来才会前进**（真机就是垫片写那行心跳）。
-  let logMtime = Date.now() - 5000
-  const tick = () => { logMtime = Math.max(Date.now(), logMtime + 1) }
-  /**
-   * 假子进程：形状要够真——`spawnElevated` 会读 `stdout` 并用 `once('exit')` 判定收尾。
-   * 太简的桩（只有 `{ pid, unref }`）会让它一路等到超时才继续，单测白白慢 8 秒。
-   */
-  const fakeChild = ({ code = 0, stdout = 'QAI-RUNAS' } = {}) => ({
-    pid: 909,
-    stdout: { on: (event, handler) => { if (event === 'data') setTimeout(() => handler(stdout), 0) } },
-    stderr: { on: () => {} },
-    once: (event, handler) => { if (event === 'exit') setTimeout(() => handler(code), 1) },
-    unref() {},
-  })
-  const baseDeps = {
-    exists: (file) => /launcher\.bat$/i.test(file),
-    spawnImpl: () => { tick(); return fakeChild() },
-    shimWaitMs: 0,
-    writeFile: (file, content) => { written.push({ file, content }) },
-    ensureDir: (target) => { written.push({ dir: target }) },
-    stat: (target) => ({ mtimeMs: String(target).endsWith('.log') ? logMtime : Date.now() }),
-    readFile: (target) => (String(target).endsWith('.log') ? '=== shim start now ===\r\n' : ''),
-  }
-  const supConfig = { ...config, cwd: shimDir, napcatBat: 'C:\\NapCat\\bootmain\\napcat.bat', napcatQr: '' }
-  const sup = createSupervisor(supConfig, baseDeps)
+// v0.8.0：NapCat 垫片（含提权与心跳判据）随代码退场，issue #2 的那条路已不存在。
 
-  // ① 垫片没跑（心跳没动）时：**不许**再回那句 "缺少垫片脚本路径（shimFile）"，而要如实说没心跳
-  const stalled = await createSupervisor(supConfig, { ...baseDeps, spawnImpl: () => fakeChild() }).startNapcat()
-  check('★控制台「启动 NapCat」不再回"缺少垫片脚本路径（shimFile）"（issue #2 的原话）',
-    String(stalled.reason).includes('shimFile') === false && String(stalled.reason).includes('没有留下心跳')
-    && String(stalled.reason).includes('看不到 UAC 弹窗')
-    && written.some((item) => item.file === shimFile && String(item.content).includes('launcher.bat')),
-    brief({ ok: stalled.ok, reason: String(stalled.reason).slice(0, 90) }))
-  check('垫片落点 = 工作目录\\qq-napcat-launch.cmd（与 DSH 面板写的是同一个文件）',
-    written.some((item) => item.file === shimFile) && written.some((item) => item.dir === shimDir),
-    brief(written.map((item) => item.file ?? item.dir)))
-  check('写的垫片里带 cd /d 与 call launcher.bat（脏活都在文件里）',
-    String(written.find((item) => item.file === shimFile)?.content ?? '').includes('call "C:\\NapCat\\bootmain\\launcher.bat"'),
-    brief(written.length))
-
-  // ② 心跳动了 ⇒ 才算成功，并且不再让用户去点一个本机根本不会出现的 UAC 弹窗
-  const ran = await sup.startNapcat()
-  check('★垫片留下心跳才算成功：ok=true、带 shimRan/shimFile/logFile（旧文案让用户去点 UAC 弹窗）',
-    ran.ok === true && ran.shimRan === true && ran.shimFile === shimFile && ran.logFile === logFile
-    && String(ran.reason).includes('垫片已执行') && String(ran.reason).includes('请在 UAC 弹窗') === false,
-    brief({ ok: ran.ok, shimRan: ran.shimRan, reason: String(ran.reason).slice(0, 90) }))
-
-  // ③ 60 秒内点第二次：老心跳还在窗口里，但它不是"这次"写进去的 ⇒ 不能当证据
-  const again = await createSupervisor(supConfig, { ...baseDeps, spawnImpl: () => fakeChild() }).startNapcat()
-  check('★60 秒内点第二次：日志没被新写过就不算成功（老心跳不能当证据）',
-    again.ok === false && again.shimRan === false && String(again.reason).includes('没有留下心跳'),
-    brief(String(again.reason).slice(0, 90)))
-
-  // ③b 提权子进程**不能带 detached**（本机实测：detached 的 powershell 根本不执行、退出码还是 0）。
-  //     这里从源码层面钉住：napcat 那条路必须走 spawnElevated，不能退回 startDetached。
-  const supervisorSource = readFileSync(join(here0, '..', 'control', 'lib', 'supervisor.mjs'), 'utf8')
-  const napcatBlock = supervisorSource.slice(supervisorSource.indexOf('async function runNapcatPlan'), supervisorSource.indexOf('async function startNapcat'))
-  const elevatedSource = /export function spawnElevated[\s\S]*?\n\}/.exec(supervisorSource)?.[0] ?? ''
-  check('★拉起提权命令走 spawnElevated（不带 detached —— 本机实测 detached 的 powershell 根本不执行）',
-    elevatedSource !== '' && elevatedSource.includes('detached') === false
-    && /spawnElevated\(\{/.test(napcatBlock) && napcatBlock.includes('startDetached') === false,
-    `spawnElevated 源码 ${elevatedSource.length} 字符，含 detached=${elevatedSource.includes('detached')}｜napcat 用 startDetached=${napcatBlock.includes('startDetached')}`)
-
-  // ③c powershell 非零退出 ⇒ 如实报错并带出原文（原来控制台把子进程输出整个丢掉了）
-  const refused = await createSupervisor(supConfig, {
-    ...baseDeps,
-    spawnImpl: () => fakeChild({ code: 1, stdout: '' }),
-  }).startNapcat()
-  check('★powershell 非零退出时如实报错（不再只回一句"没有心跳"让人猜）',
-    refused.ok === false && String(refused.reason).includes('没发出去') && String(refused.reason).includes('退出码 1'),
-    brief(String(refused.reason).slice(0, 100)))
-
-  // ④ 重启登录：同一条路，也要带垫片路径（原来这里也漏了）
-  const reloginWritten = []
-  const reloginSup = createSupervisor(supConfig, {
-    ...baseDeps,
-    writeFile: (file, content) => { reloginWritten.push({ file, content }) },
-    exec: (command, args, options, callback) => (typeof options === 'function' ? options : callback)(
-      null, '"NapCatWinBootMain.exe","4100","Console","1","1 K"\n"QQ.exe","4200","Console","1","1 K"\n', ''),
-  })
-  const relogin = await reloginSup.restartNapcatLogin()
-  check('★控制台「重启登录流程」也带上了垫片路径（同一条路别只修一半）',
-    relogin.ok === true && reloginWritten.some((item) => item.file === shimFile && String(item.content).includes('taskkill /PID 4100'))
-    && !String(reloginWritten[0]?.content ?? '').includes('4200'),
-    brief({ ok: relogin.ok, reason: String(relogin.reason).slice(0, 80) }))
-
-  // ⑤ 写不了垫片（权限/目录问题）→ 说清是哪个文件 + 原始原因，绝不吞掉
-  const denied = await createSupervisor(supConfig, {
-    ...baseDeps, writeFile: () => { throw new Error('EACCES: permission denied') },
-  }).startNapcat()
-  check('写不了垫片时如实报错（点名文件 + 原始原因）',
-    denied.ok === false && String(denied.reason).includes(shimFile) && String(denied.reason).includes('EACCES'),
-    brief(String(denied.reason).slice(0, 100)))
-  rmSync(shimDir, { recursive: true, force: true })
-}
-
-/**
- * ---- spawnElevated：提权命令的启动形状（issue #2 第二层原因的行为侧断言）----
- *
- * 本机实测：`detached: true` 的 powershell 子进程**根本不执行**（退出码 0、零输出、垫片一行没写）。
- * 所以「不带 detached」不是风格问题，是这条路能不能跑起来的前提。
- */
-{
-  const fakeSpawnChild = (options = {}) => ({
-    pid: 4321,
-    stdout: { on: (event, handler) => { if (event === 'data' && options.stdout) setTimeout(() => handler(options.stdout), 0) } },
-    stderr: { on: (event, handler) => { if (event === 'data' && options.stderr) setTimeout(() => handler(options.stderr), 0) } },
-    once: (event, handler) => { if (event === 'exit') setTimeout(() => handler(options.code ?? 0), 1) },
-    unref() {},
-  })
-  const seen = []
-  const okResult = await spawnElevated({
-    command: 'powershell.exe',
-    args: ['-NoProfile'],
-    spawnImpl: (command, args, options) => { seen.push({ command, args, options }); return fakeSpawnChild({ stdout: 'QAI-RUNAS\n' }) },
-  })
-  check('spawnElevated 抓得到 powershell 的输出与分支标记（旧实现整个丢掉）',
-    okResult.stdout.trim() === 'QAI-RUNAS' && okResult.code === 0 && okResult.pid === 4321,
-    brief({ code: okResult.code, stdout: okResult.stdout.trim() }))
-  check('★spawnElevated 不带 detached（本机实测 detached 的 powershell 根本不执行）',
-    seen[0]?.options?.detached === undefined && seen[0]?.options?.windowsHide === true,
-    brief(seen[0]?.options))
-  const failed = await spawnElevated({ command: 'powershell.exe', spawnImpl: () => fakeSpawnChild({ code: 1, stderr: 'Access is denied' }) })
-  check('spawnElevated 如实带回非零退出码与 stderr',
-    failed.code === 1 && failed.stderr.includes('Access is denied'), brief({ code: failed.code, stderr: failed.stderr }))
-  const thrown = await spawnElevated({ command: 'nope.exe', spawnImpl: () => { throw new Error('ENOENT 找不到文件') } })
-  check('spawnElevated 把 spawn 抛错变成 failed 结果（不把异常丢给调用方）',
-    thrown.failed === true && thrown.message.includes('ENOENT'), brief(thrown.message))
-}
 
 check('ui.html 里有二维码卡片与 token 缺失提示',
   readFileSync(join(here0, '..', 'control', 'ui.html'), 'utf8').includes('loadQr')
@@ -692,9 +572,10 @@ rmSync(dir, { recursive: true, force: true })
 // 审查 O1/O2：二维码只认 PNG 魔数；stat 报错要区分"不存在"与"读不到"
 {
   const qrDir2 = mkdtempSync(join(tmpdir(), 'qq-qr-audit-'))
-  const notPng = join(qrDir2, 'fake.png')
+  // qr 路径 = waylayBat 同目录的 qrcode.png ⇒ 假 PNG 必须顶在推导位上
+  const notPng = join(qrDir2, 'qrcode.png')
   writeFileSync(notPng, '{"this":"is json, not a png"}')
-  const supNotPng = createSupervisor({ ...config, cwd: qrDir2, napcatQr: notPng }, { now: () => Date.now() })
+  const supNotPng = createSupervisor({ ...config, cwd: qrDir2, waylayBat: join(qrDir2, 'x.bat') }, { now: () => Date.now() })
   const r = await supNotPng.qr()
   check('qr() 拒绝非 PNG 文件（不给前端当图片）', r.ok === true && r.dataUrl === '' && r.hint.includes('不是 PNG'), r.hint)
   const busy = qrStatus('x', 1, { stat: () => { const e = new Error('busy'); e.code = 'EBUSY'; throw e } })

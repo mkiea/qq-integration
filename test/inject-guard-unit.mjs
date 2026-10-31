@@ -179,8 +179,16 @@ const groupFrame = (text, extra = {}) => ({
 const replyOf = (sessionId, text) => mock.emit(sessionId, { type: 'assistant/message', data: { message: { content: [{ type: 'text', text }] } } })
 const turnStart = (sessionId, turn = 1) => mock.emit(sessionId, { type: 'turn/start', data: { turn } })
 const turnEnd = (sessionId, turn = 1, reason = { kind: 'completed' }) => mock.emit(sessionId, { type: 'turn/end', data: { turn, reason } })
+/**
+ * followups 里存的是**实际转交出去的整段文本**，而 bridge 会给群消息加说话人标签
+ * `【昵称对你说】正文`（昵称是发送方可控的，只能当标签、不能当自由文本）。
+ * 所以判"有没有转交"必须用**子串**，拿数组 includes 当精确匹配会在加标签后恒为 false
+ * —— 老实现就踩了这个：断言永远假，后面 `mock.records.get('')` 直接 TypeError，
+ * ②~⑨ 九组时序用例从来没跑到。
+ */
+const forwarded = (record, text) => (record?.followups ?? []).some((item) => String(item).includes(text))
 const sessionIdOf = (text) => {
-  const record = [...mock.records.values()].find((item) => item.followups.includes(text))
+  const record = [...mock.records.values()].find((item) => forwarded(item, text))
   return record?.sessionId ?? ''
 }
 
@@ -198,7 +206,10 @@ check('真人回复照常发出（基线）', server.sent.length === 1 && server
 // ---- ② 注入消息：同步窗口 + 异步回复都必须被拦下 ----
 server.emit('message', groupFrame('注入的消息', { __injected: true }))
 await sleep(30)
-check('注入帧也走真实管线（转交给了 agent）', mock.records.get(firstSession).followups.includes('注入的消息'))
+check('注入帧也走真实管线（转交给了 agent）', forwarded(mock.records.get(firstSession), '注入的消息'))
+// 顺带钉住标签本身：上面那条用子串判"有没有转交"，若有人把标签去掉，这里会红，
+// 不会出现"两条都过、标签早没了"的静默退化。
+check('转交给 agent 的群文本带说话人标签', (mock.records.get(firstSession)?.followups ?? []).some((item) => String(item).startsWith('【测试对你说】')), JSON.stringify(mock.records.get(firstSession)?.followups))
 turnStart(firstSession, 2)
 replyOf(firstSession, '注入回合的回复')
 turnEnd(firstSession, 2)
@@ -252,7 +263,7 @@ check('每次拦截都有独立事件', bridge.trace.recent({ limit: 300 }).filt
 // ---- ⑥ 注入的私聊同理 ----
 server.emit('message', { bot: server.socket, messageType: 'private', userId: 1001, text: '私聊注入', atMe: false, ats: [], reply: null, records: [], images: [], files: [], messageId: 'pm-1', senderName: '测试', raw: { message: [] }, __injected: true })
 await sleep(30)
-const privateSession = [...mock.records.values()].find((item) => item.followups.includes('私聊注入'))?.sessionId ?? ''
+const privateSession = [...mock.records.values()].find((item) => forwarded(item, '私聊注入'))?.sessionId ?? ''
 check('私聊注入也建立了会话', privateSession !== '')
 turnStart(privateSession, 1)
 replyOf(privateSession, '私聊注入回复')
@@ -402,8 +413,8 @@ appendFileSync(slowInjectFile, `${JSON.stringify({ kind: 'message', text: '注�
 await waitFor(() => slowBridge.injecting === true, 4000)
 // 注入派发还在等会话建立（800ms）时，另一个群来了一条真人消息
 slowServer.emit('message', { bot: slowServer.socket, messageType: 'group', groupId: 2003, userId: 1001, text: '别的群的真人消息', atMe: true, ats: [999], reply: null, records: [], images: [], files: [], messageId: 'g2003-1', senderName: '测试', raw: { message: [] } })
-await waitFor(() => [...slowMock.records.values()].some((record) => record.followups.includes('别的群的真人消息')), 5000)
-const otherSession = [...slowMock.records.values()].find((record) => record.followups.includes('别的群的真人消息'))?.sessionId ?? ''
+await waitFor(() => [...slowMock.records.values()].some((record) => forwarded(record, '别的群的真人消息')), 5000)
+const otherSession = [...slowMock.records.values()].find((record) => forwarded(record, '别的群的真人消息'))?.sessionId ?? ''
 await waitFor(() => slowBridge.injecting === false, 5000)
 if (otherSession) {
   slowMock.emit(otherSession, { type: 'turn/start', data: { turn: 1 } })
@@ -444,8 +455,8 @@ appendFileSync(flakyBridge.injectFile, `${JSON.stringify({ kind: 'message', text
 await waitFor(() => flakyBridge.injecting === false && threw, 5000)
 check('注入派发异常后 injecting 被复位（通道不卡死）', flakyBridge.injecting === false, String(flakyBridge.injecting))
 appendFileSync(flakyBridge.injectFile, `${JSON.stringify({ kind: 'message', text: '第二次注入', groupId: 2002, userId: 1001 })}\n`, 'utf8')
-await waitFor(() => [...flakyMock.records.values()].some((record) => record.followups.includes('第二次注入')), 5000)
-check('异常之后的注入仍能被消费', [...flakyMock.records.values()].some((record) => record.followups.includes('第二次注入')))
+await waitFor(() => [...flakyMock.records.values()].some((record) => forwarded(record, '第二次注入')), 5000)
+check('异常之后的注入仍能被消费', [...flakyMock.records.values()].some((record) => forwarded(record, '第二次注入')))
 flakyBridge.stop()
 server.dryRun = false
 

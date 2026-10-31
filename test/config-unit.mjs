@@ -137,7 +137,12 @@ if (bridge) {
   const status = await send('/status')
   check('/status 可用', status.includes('QQ 桥状态'), status.trim())
   const fortune = await send('今日人品')
-  check('默认开启的运势可用', fortune.length > 0 && /分|人品/.test(fortune), fortune.split('\n')[0])
+  // 2026-10-31：娱乐包总开关 `funEnabled` 默认关，所以默认配置下运势**不该**被拦住。
+  // 判据不是"输出为空"——它会被当成普通聊天转给 agent，这里要的正是这个证据：
+  // 走到 agent 说明本地那条分支没接（而不是接了又悄悄吐空）。
+  check('默认配置下运势不响应（娱乐包总开关默认关）',
+    !/分|人品/.test(fortune) && fortune.includes('no agent'),
+    fortune.split('\n')[0].slice(0, 80))
   bridge.stop()
 }
 

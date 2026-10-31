@@ -71,7 +71,8 @@ for (const id of ['inbox', 'inboxMeta', 'replayOut', 'replayState', 'replayLimit
   if (!ui.includes(`id="${id}"`)) die(`面板缺少元素 #${id}`)
 }
 check('面板录制区元素齐全', true)
-const script = /<script>([\s\S]*)<\/script>/.exec(ui)?.[1] ?? ''
+// 量具修复（v0.1.0）：ui.html 有两个 <script> 块，旧的贪婪正则把中间的 HTML 拼进来必然解析失败。
+const script = [...ui.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]).join('\n;\n')
 check('面板脚本可解析为合法 JS', (() => { try { new Function(script); return true } catch { return false } })())
 for (const fn of ['loadInbox', 'replayOne', 'replayRecent', 'replayEntries', 'doInject', 'clearQueue', 'escapeHtml', 'escapeAttr']) {
   if (!new RegExp(`(async )?function ${fn}\\(`).test(script)) die(`面板缺少函数 ${fn}`)

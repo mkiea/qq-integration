@@ -32,8 +32,6 @@ export function runDiagnose({ config, snapshot, runtime, events = [], now = Date
   // ---- 本机依赖 ----
   checks.push(item('node', 'node 可执行文件', config?.nodeExe && exists(config.nodeExe), config?.nodeExe || '未探测到', '设置 qq-control.json 的 nodeExe'))
   checks.push(item('dsh', 'DSH 宿主入口 bin.js', config?.dshBin && exists(config.dshBin), config?.dshBin || '未探测到', '用 --print-config 检查探测结果，或手动设置 dshBin'))
-  checks.push(item('napcat-bat', 'NapCat 启动脚本', config?.napcatBat && exists(config.napcatBat), config?.napcatBat || '未探测到',
-    '设置 napcatBat，或先安装 NapCat（填 bootmain\\launcher.bat，别填 napcat.bat：那个在这版只是拉起加载器 + pause）', 'warn'))
   checks.push(item('cwd', '宿主工作目录', Boolean(config?.cwd) && exists(config.cwd), config?.cwd || '未设置', '设置 cwd（宿主与桥都在这个目录读写日志/状态）'))
 
   // ---- 端口 ----
@@ -43,15 +41,6 @@ export function runDiagnose({ config, snapshot, runtime, events = [], now = Date
   checks.push(item('port-onebot', `OneBot 端口 ${onebot?.port ?? '?'}`, onebot?.listening,
     onebot?.listening ? `PID ${onebot.pid} ${onebot.process}` : '无人监听',
     '机器人宿主没起来时 6700 不会监听；若被别的进程占用，用「释放」按钮结束它'))
-  const napcatPort = row('napcat')
-  /**
-   * 这里以前和 6700 一样写「无人监听」，于是 issue #3 的用户看到「6700 明明通了、6099 却无人监听」，
-   * 以为 QQ 桥坏了。6099 是 **WebUI**：只有扫码/登录的时候才需要它，收消息走反向 WS（NapCat 主动连出）。
-   * ⇒ 文案改成"未监听（仅扫码/登录时需要，不影响收消息）"，一眼能看出这不是故障。
-   */
-  checks.push(item('port-napcat', `NapCat WebUI ${napcatPort?.port ?? '?'}`, napcatPort?.listening,
-    napcatPort?.listening ? `PID ${napcatPort.pid} ${napcatPort.process}` : '未监听（仅扫码/登录时需要，不影响收消息）',
-    '需要扫码登录时点「启动 NapCat」；仅聊天不需要它也能收消息（反向 WS 由 NapCat 主动连出）', 'warn'))
   const tts = row('tts')
   const ttsWanted = runtime?.features?.ttsEnabled === true
   checks.push(item('port-tts', `GPT-SoVITS ${tts?.port ?? '?'}`, !ttsWanted || tts?.listening,
@@ -61,15 +50,15 @@ export function runDiagnose({ config, snapshot, runtime, events = [], now = Date
   // ---- 链路 ----
   // 真 bug（v0.5.9 全面检测抓到）：这里一直在读 `snapshot.botOnline`，而插件**从来没写过这个字段**，
   // 于是"机器人已连上桥"这一项在验收台上永远是红的（明细永远显示"无 ESTABLISHED 连接"）。
-  // 现在插件会写它（NapCat 的 bot_online/bot_offline），并且这里补上"未知就回落到 TCP 连接数"。
+  // 现在插件会写它（QQ 侧的 bot_online/bot_offline 通知），并且这里补上"未知就回落到 TCP 连接数"。
   const accountOnline = typeof snapshot?.botOnline === 'boolean' ? snapshot.botOnline : null
   const established = onebot?.established ?? 0
   const botConnected = accountOnline === false ? false : (accountOnline === true || established > 0)
   checks.push(item('bot-online', '机器人已连上桥（6700 有连接）', botConnected,
     accountOnline === false
-      ? `NapCat 报了 bot_offline（${established} 条连接）`
-      : botConnected ? `${established} 条连接${accountOnline === true ? '，且 NapCat 报了 bot_online' : ''}` : '无 ESTABLISHED 连接',
-    'NapCat 未启动/未登录时不会连过来：检查 QQ 是否在线、NapCat 是否扫码'))
+      ? `QQ 侧报了 bot_offline（${established} 条连接）`
+      : botConnected ? `${established} 条连接${accountOnline === true ? '，且 QQ 侧报了 bot_online' : ''}` : '无 ESTABLISHED 连接',
+    'Waylay 未启动/未登录时不会连过来：检查 QQ 是否在线、Waylay 是否已登录'))
   const bridgeSeen = events.some((event) => now - event.ts < FRESH_WINDOW_MS)
   checks.push(item('bridge-alive', '桥在最近 15 分钟内产生过事件', bridgeSeen,
     bridgeSeen ? `最近事件 ${Math.round((now - Math.max(...events.map((event) => event.ts))) / 1000)}s 前` : 'trace 文件里没有近期事件',

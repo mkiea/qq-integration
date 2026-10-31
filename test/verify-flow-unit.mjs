@@ -219,7 +219,14 @@ bridge.joinGuard.clear()
 bridge.joinGuard.maxPending = 1
 await request({ userId: 6001, flag: 'flag-6001' })
 const full = await request({ userId: 6002, flag: 'flag-6002' })
-check('队列满时不再推送新请求', !full.includes('6002'), full.replace(/\n/g, ' | ').slice(0, 60))
+/**
+ * 口径说明（2026-10-30 订正）：v0.7.21 起，"队列满"**会**给管理员发一条告知（`#notifyRequestDrop`），
+ * 因为静默丢弃会让主人根本不知道有人来过。所以这里不能断言"一个字都没有"，
+ * 要断言的是**不给可审批的提示**（不出现 `/同意`）+ 明说被忽略。
+ */
+check('队列满时不再推送可审批的新请求（只告知被丢弃）',
+  full.includes('被忽略') && !full.includes('/同意'),
+  full.replace(/\n/g, ' | ').slice(0, 80))
 check('未处理请求不进模型', agentCalls === 0, `agentCalls=${agentCalls}`)
 
 bridge.stop()

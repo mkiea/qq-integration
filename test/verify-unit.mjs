@@ -88,7 +88,12 @@ const listText = formatPendingList(listed)
 check('列表含序号与剩余时间', listText.includes('#1') && listText.includes('剩余'), listText.replace(/\n/g, ' | '))
 const prompt = formatJoinPrompt({ ...first.entry }, { groupName: '测试群' })
 check('提示含群名与命令', prompt.includes('测试群') && prompt.includes('/同意 1'), prompt.replace(/\n/g, ' | '))
-check('好友请求文案', formatJoinPrompt({ ...second.entry }).includes('加好友'))
+// 文案已经改成「想加你好友」（比裸的「加好友」更像人话），断言跟着改：
+// 钉的是"好友申请要说明这是加好友、且明说对方收不到题目"，不是某一个词。
+check('好友请求文案', (() => {
+  const text = formatJoinPrompt({ ...second.entry })
+  return text.includes('想加你好友') && text.includes('收不到题目')
+})(), formatJoinPrompt({ ...second.entry }).replace(/\n/g, ' | '))
 check('空条目返回空串', formatJoinPrompt(null) === '')
 
 console.log(`\n${passed} passed, ${failed} failed`)

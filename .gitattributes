@@ -1,0 +1,12 @@
+# 换行：仓库里一律存 LF，检出也用 LF。
+#
+# 为什么写死 eol=lf：本项目之前被 CRLF/LF **假差异**坑过好几轮——同一份文件在
+# 仓库是 LF、在运行时副本是 CRLF，`diff -rq` 整文件报差异，看起来像"代码不同步"，
+# 实际一个字节的语义都一样。固定成 LF 之后，两份副本可以直接逐字节比。
+#
+# ⚠️ 批处理文件必须留 CRLF：`cmd.exe` 解析 .bat/.cmd 时，纯 LF 会让 `goto`/`if`
+# 这类行内语法错乱，而且**不报错**、只是行为变得莫名其妙。所以单独开白名单。
+* text=auto eol=lf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+*.ps1 text eol=crlf

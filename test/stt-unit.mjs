@@ -90,6 +90,15 @@ try {
 let resolveArgs = null
 let transcribeArgs = null
 const fakeService = {
+  // `transcribeViaDsh` 在 2026-10-29 加了一步"先准备再转写"（ensurePrepared），
+  // 它要求服务带 `snapshot`/`prepare`。这个 fixture 没跟上，于是
+  // transcribeViaDsh 一进门就抛"DSH 的语音转文字没启用"，**整个套件从那天起 0 覆盖**
+  // （报的是环境错，看起来像"本机没装"，其实只是假服务形状不对）。
+  // 这里把 phase 直接摆成 ready：走"已经就绪就不用等"的短路分支，不会触发模型下载。
+  snapshot() {
+    return { selection: { providerId: 'fake' }, providers: [{ id: 'fake', preparation: { phase: 'ready' } }] }
+  },
+  async prepare() {},
   resolve(request) { resolveArgs = request; return { provider: 'sensezero?', audio: request.audio, language: request.language } },
   async transcribe(spec, signal) {
     transcribeArgs = { spec, hasSignal: typeof signal?.addEventListener === 'function' || signal instanceof AbortSignal }
@@ -105,12 +114,17 @@ check('transcribe 收到 signal（可取消）', transcribeArgs.hasSignal === tr
 // 没装服务 → 中文提示，且不会去碰网络
 let noService = ''
 try { await transcribeViaDsh({ service: undefined, wav: makeWav() }) } catch (error) { noService = error.message }
-check('DSH 没启用时给出可操作的中文原因', noService.includes('没启用') && noService.includes('voice-input-bundle'), noService.slice(0, 40))
+// 旧断言写死 `voice-input-bundle`，但默认那条路早已换成
+// `dsh-experimental-speech-to-text` + `-sensevoice` 两个包。判"可操作"该看
+// 「说了没启用」+「告诉人往哪装」，不是某个包名——包名会换代，动作不会。
+check('DSH 没启用时给出可操作的中文原因', noService.includes('没启用') && noService.includes('加进 profile'), noService.slice(0, 60))
 
 // 空文本 → 明确报错
 let emptyText = ''
 try {
-  await transcribeViaDsh({ service: { resolve: (r) => r, transcribe: async () => ({ text: '   ' }) }, wav: makeWav() })
+  // 这个内联假服务同样要带 snapshot/prepare：否则会先在 ensurePrepared 抛"没启用"，
+  // 于是"空文本"这条永远测不到（实测就是被这条前置条件挡掉的）。
+  await transcribeViaDsh({ service: { ...fakeService, transcribe: async () => ({ text: '   ' }) }, wav: makeWav() })
 } catch (error) { emptyText = error.message }
 check('空结果会报错而不是把空字符串喂给模型', emptyText.includes('空文本'))
 

@@ -32,7 +32,9 @@ check('lib/ 全部为合法 UTF-8（无乱码替换字符）', badEncoding.lengt
 
 // ---- 配置键：代码里读的必须在 schema 里 ----
 const schemaKeys = new Set(Object.keys(Config({})))
-const skipKeys = new Set(['then', 'constructor', 'name', 'length', 'toString', 'valueOf', 'hasOwnProperty'])
+// 'mjs'：2026-10-30 起 lib/settings-routes.js 会 `import … from '../control/lib/config.mjs'`，
+// 这条朴素正则会把**文件名** `config.mjs` 也当成 `config.<键>` 读出来 —— 它不是配置键，跳过。
+const skipKeys = new Set(['then', 'constructor', 'name', 'length', 'toString', 'valueOf', 'hasOwnProperty', 'mjs'])
 const readKeys = new Map()   // key -> [file:line]
 for (const name of files) {
   const lines = readFileSync(join(libDir, name), 'utf8').split(/\r?\n/)
@@ -177,10 +179,10 @@ for (const [name, range] of peerDsh) {
 check('每条声明的运行时线都被 peer 范围覆盖（升线必须同步改表）',
   uncovered.length === 0, uncovered.slice(0, 6).join('; ') || `${peerDsh.length} 个 peer × ${supportedLines.length} 条线`)
 
-// ---- README 惯例：更新日志只展示最近五版 ----
+// ---- README 惯例：更新日志只展示最近五版（版本少时可以少于五条，但不得为空、首条必须是当前版本）----
 const readme = readFileSync(join(libDir, '..', 'README.md'), 'utf8')
 const versionBullets = [...readme.matchAll(/^- \*\*v([0-9.]+)\*\* —/gm)].map((match) => match[1])
-check('README 更新日志恰好五版（滚动）', versionBullets.length === 5, versionBullets.join(','))
+check('README 更新日志 1–5 版（滚动）', versionBullets.length >= 1 && versionBullets.length <= 5, versionBullets.join(','))
 check('README 首版为当前版本', versionBullets[0] === pkg.version, `${versionBullets[0]} vs ${pkg.version}`)
 /**
  * ★ v0.7.3：包必须导出 `dsh-qq-onebot-bridge/extension`。
@@ -193,7 +195,7 @@ check('★包导出了 /extension 入口（第三方才不用写 file:// 绝对�
   JSON.stringify(Object.keys(pkg.exports ?? {})))
 const readmeEn = readFileSync(join(libDir, '..', 'README.en.md'), 'utf8')
 const versionBulletsEn = [...readmeEn.matchAll(/^- \*\*v([0-9.]+)\*\* —/gm)].map((match) => match[1])
-check('README.en 更新日志恰好五版', versionBulletsEn.length === 5, versionBulletsEn.join(','))
+check('README.en 更新日志 1–5 版（滚动）', versionBulletsEn.length >= 1 && versionBulletsEn.length <= 5, versionBulletsEn.join(','))
 check('英文 README 首版同版本', versionBulletsEn[0] === pkg.version, versionBulletsEn[0])
 
 // ---- v0.5.9：OPS_ARG_WORDS（识别"命令粘住参数"用的词表）必须与命令正则同步 ----

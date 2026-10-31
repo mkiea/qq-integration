@@ -293,6 +293,39 @@ check('词表改动后热重载', reloaded.includes('敏感词'), reloaded.trim(
   bridge.config.groupCheckMembers = true
 }
 
+/**
+ * ---- 反向 WS 被拒 → bridge 必须把这条写进 trace（2026-10-31，外部审计 S1/S2 的收尾）----
+ *
+ * 这一节测的**不是 server**（server 自己的 16 条在 onebot-origin-unit.mjs），而是**接线**：
+ * server 在 `#accept` 里 `emit('connection-rejected')`，bridge 订阅它写 trace。
+ * 如果 bridge 忘了订阅、事件名拼错、或 trace.event 的参数形状不对，
+ * onebot-origin-unit 依然全绿——**它只管发，不管有没有人接**。
+ * "修完量具必须证明它还能区分"的另一种形状：发出去的信号要证明真的有人收到了。
+ */
+{
+  const beforeConnect = bridge.trace.summary().byStage.connect ?? 0
+  server.emit('connection-rejected', { reason: 'browser-origin', origin: 'https://evil.example', remote: '127.0.0.1' })
+  server.emit('connection-rejected', { reason: 'bad-token', origin: '', remote: '127.0.0.1' })
+  await new Promise((resolve) => setTimeout(resolve, 30))
+
+  const hits = bridge.trace.recent({ stage: 'connect', limit: 10 })
+  const byOrigin = hits.find((item) => item.reason?.includes('evil.example'))
+  const byToken = hits.find((item) => item.reason?.includes('access token'))
+
+  check('端到端·WS 拒绝：两条都写进了 trace（stage=connect）',
+    (bridge.trace.summary().byStage.connect ?? 0) === beforeConnect + 2,
+    `connect 事件 ${beforeConnect}→${bridge.trace.summary().byStage.connect ?? 0}`)
+  check('端到端·WS 拒绝：Origin 拒绝带得出被拒的地址（否则 trace 只能说"有个网页"）',
+    Boolean(byOrigin) && byOrigin.ok === false && byOrigin.reason.includes('https://evil.example'),
+    byOrigin ? byOrigin.reason.slice(0, 60) : '(没有)')
+  check('端到端·WS 拒绝：token 拒绝也写，且说明原因', Boolean(byToken) && byToken.reason.includes('access token'), '')
+
+  // 控制台的实时事件流按 stage 过滤——stage 名一旦改了，用户就会"看不见"而不知道为什么
+  check('端到端·WS 拒绝：stage 名固定为 connect（别悄悄改名）',
+    hits.length === 0 || hits.every((item) => item.stage === 'connect'),
+    hits[0]?.stage ?? '')
+}
+
 bridge.stop()
 rmSync(dir, { recursive: true, force: true })
 console.log(`\n${passed} passed, ${failed} failed`)

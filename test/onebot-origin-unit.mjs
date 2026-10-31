@@ -77,6 +77,14 @@ async function main() {
   {
     const { server, port, logs, started } = await boot()
     check('服务起得来', started.ok === true, JSON.stringify(started))
+    /**
+     * 拒绝必须**发事件**，不只是打日志。
+     * 2026-10-31 实测发现 `ctx.logger` 的输出不进 `qq-host-out.log`（连启动时必打的
+     * `QQ bridge ready` 都没有），所以只靠 logger 的话"有网页想连、被拒了"用户看不见。
+     * bridge 订阅这个事件写 trace，控制台与 `/为什么` 才查得到。
+     */
+    const rejected = []
+    server.on('connection-rejected', (info) => rejected.push(info))
     // 此刻**还没有任何客户端连上来**。告警应该已经发出去了——端口一开就暴露，
     // "没人连"不等于"没暴露"。这条断言专门盯这件事。
     check('默认档：端口一开就提示未配置 token（不等有人连）', logs.some((l) => String(l).includes('未配置 accessToken')))
@@ -89,6 +97,9 @@ async function main() {
     check('默认档：带 Origin 的连接被拒', evil.alive === false)
     check('默认档：拒绝码是 4003（不是随便断一下）', evil.code === 4003, `code=${evil.code} reason=${evil.reason}`)
     check('默认档：拒绝理由进了日志，不是静默', logs.some((l) => String(l).includes('browser Origin')), logs.filter((l) => String(l).includes('browser Origin'))[0] ?? '(无)')
+    check('默认档：拒绝会发 connection-rejected 事件（bridge 靠它写 trace）',
+      rejected.length === 1 && rejected[0].reason === 'browser-origin' && rejected[0].origin === 'https://evil.example',
+      JSON.stringify(rejected[0] ?? null))
 
     const localOrigin = await probe(url, { headers: { Origin: 'http://127.0.0.1:3000' } })
     check('默认档：连本机网页的 Origin 也拒（攻击者可以自己起一个本地页面）', localOrigin.alive === false, `code=${localOrigin.code}`)
@@ -111,11 +122,15 @@ async function main() {
   // ---- 三、token 仍然独立生效（Origin 闸不是它的替代品）----
   {
     const { server, port } = await boot({ accessToken: 'secret-token' })
+    const rejected = []
+    server.on('connection-rejected', (info) => rejected.push(info))
     const url = `ws://127.0.0.1:${port}`
 
     const noAuth = await probe(url)
     check('有 token 时：不带 token 被拒', noAuth.alive === false)
     check('有 token 时：拒绝码是 4001', noAuth.code === 4001, `code=${noAuth.code}`)
+    check('有 token 时：拒绝也发事件（reason=bad-token）',
+      rejected.length === 1 && rejected[0].reason === 'bad-token', JSON.stringify(rejected[0] ?? null))
 
     const good = await probe(url, { headers: { Authorization: 'Bearer secret-token' } })
     check('有 token 时：带对 token 能连', good.alive === true, JSON.stringify(good))

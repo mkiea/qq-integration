@@ -145,12 +145,14 @@ check('凡 schema 里带 apiKey/baseUrl/provider/model 的开关都标了依赖'
  * 2026-10-31：+2 行 —— `funEnabled`（布尔，娱乐包总开关）+ `dataDir`（文本，数据根目录），
  *   所以总数 87 → **89**、开关 69 → 70、文本 1 → 2。两条都是"新增一行没同步更新断言就会红"的
  *   正常变化，不是弄丢了行。
+ * 2026-10-31 下午：再 +1 行 —— `groupCheckMembers`（布尔，「群内也校验成员名单」，
+ *   用户「群聊其他用户跟他聊天不回应」），总数 89 → **90**、开关 70 → 71。
  */
-check('依赖分布合理（开箱即用与需准备兼有；总数 89 = 70 开关 + 12 数值 + 1 时段 + 3 名单 + 1 下拉 + 2 文本）',
+check('依赖分布合理（开箱即用与需准备兼有；总数 90 = 71 开关 + 12 数值 + 1 时段 + 3 名单 + 1 下拉 + 2 文本）',
   allRows.filter((entry) => entry.needs === '').length >= 5
   && allRows.filter((entry) => entry.needs !== '').length >= 20
-  && allRows.length === 89
-  && boolRows.length === 70 && numRows.length === 12
+  && allRows.length === 90
+  && boolRows.length === 71 && numRows.length === 12
   && allRows.filter((entry) => entry.type === 'times').length === 1
   && allRows.filter((entry) => entry.type === 'list').length === 3
   && allRows.filter((entry) => entry.type === 'select').length === 1
@@ -976,8 +978,8 @@ check('★「AI账号与白名单」只放"谁能让它开口"（不放回复样
     const group = PANEL_GROUPS.find((item) => item.id === 'whitelist')
     const chat = PANEL_GROUPS.find((item) => item.id === 'chat')
     return group !== undefined && group.title === 'AI账号与白名单'
-      // 准入门（群里只理被 @ 的 / 允许私聊）和白名单是同一件事：谁能让它开口
-      && group.rows.map((row) => `${row.key}:${row.type}`).join(',') === 'botQq:number,allowAllChats:boolean,replyOnlyWhenMentioned:boolean,acceptPrivate:boolean,allowUsers:list,allowGroups:list,adminUsers:list'
+      // 准入门（群里只理被 @ 的 / 允许私聊 / 群内是否校验成员）和白名单是同一件事：谁能让它开口
+      && group.rows.map((row) => `${row.key}:${row.type}`).join(',') === 'botQq:number,allowAllChats:boolean,replyOnlyWhenMentioned:boolean,acceptPrivate:boolean,allowUsers:list,allowGroups:list,groupCheckMembers:boolean,adminUsers:list'
       // 对话基础里不再留这两个开关（避免两处都能改、看着像重复）
       && !chat.rows.some((row) => row.key === 'replyOnlyWhenMentioned' || row.key === 'acceptPrivate')
       /**

@@ -240,7 +240,7 @@ profile patch 读不到 / 读坏了**当没配**（控制台不能因为配置�
 
 用户原话：「跟 forge 一样吧」。profile 的依赖从
 `git+https://github.com/cheesehaqi/dsh-qq-onebot-bridge.git` 改成
-`link:C:/Users/someone/Desktop/chat role/qq-integration`；
+`link:C:/Users/<你>/Desktop/chat role/qq-integration`；
 `pnpm-lock.yaml` 里那条 pin 在 `#c59ca8f` 的记录随之消失，`pnpm-workspace.yaml` 里带提交号的
 `allowBuilds` 旧条目一并删掉。
 
@@ -273,3 +273,48 @@ profile patch 读不到 / 读坏了**当没配**（控制台不能因为配置�
 **测试位置也变了**：以前"只能在运行时副本跑"，现在仓库里有 `node_modules`，直接在仓库跑。
 新增 `test/sync-tool-unit.mjs`（14 条）专门守住上面两个缺陷 + 白名单 / CRLF 口径 / 只拷不删 / 环境变量覆盖。
 全量 **66 套件 / 4226 条断言，0 失败**。
+
+**⑮ 群里别人说话它不回：把"隐藏规则"变成显式开关（2026-10-31 用户报障）**
+
+用户原话：「还有群聊其他用户跟他聊天不回应」。
+
+**先取证，不靠猜**。`qq-trace.jsonl` 里同一分钟的记录已经说明了原因：
+
+```
+stage=inbound  ok=true   chatKey=g:<群号>  text="哦不"
+stage=whitelist ok=false reason="成员不在 allowUsers 白名单（QQ <对方号> 不在里面…）"
+stage=mention  ok=false reason="群聊未 @ 机器人（replyOnlyWhenMentioned=true）"
+```
+
+**两道独立的闸**，任一道不过它都一个字不回：
+
+1. `allowGroups` 命中了，但发送者还要在 `allowUsers` 里——而 `allowUsers` 只有主人那四个号。
+   于是"群里除了主人，谁说话它都不回"，症状和"它坏了"完全一样（它既不回话也不解释）。
+2. 群消息还要 @ 到它（`replyOnlyWhenMentioned`，默认开）。
+
+**改动**：新增布尔 `groupCheckMembers`（面板「AI账号与白名单」→「群内也校验成员名单」）：
+
+- **默认 `true`** = 保留历史行为。老配置里没有这个键，若默认放行，等于"一次升级悄悄把每个白名单群的
+  准入范围放大到全体成员"——这种事不能由升级替用户决定。（代码里用 `!== false` 而不是 `=== true` 兜住。）
+- 关掉后：白名单群里**任何成员**都能触发它；`allowGroups`（哪个群）和 @ 门槛**都不变**，私聊也不受影响。
+- trace 里的拒绝理由也改了，会把两条处置路径都写出来（加号 / 关开关），不再只说"不在白名单"。
+
+**连带修的两处**（都属于"改了一个判据，别的地方还在用旧假设"）：
+
+- `#replayHints()` 补上 `groupCheckMembers`。它决定白名单分支走向，不进回放提示的话，
+  离线回放会按默认 `true` 重放——**结论看起来一样可信，其实重放的不是当时那次决定**。
+- 运行快照 `flags.groupCheckMembers`：这个开关唯一的症状就是"群里别人说话它不回"，
+  没有这一项，改完到底热载生效没有只能翻 patch 猜。
+
+**本机配置已改**：profile 的 `cordis.patch.yml` 里写入 `groupCheckMembers: false`（走项目自己的
+`upsertPatchValue` + 原子写，`js-yaml` 回读确认该键落在 `dsh-qq-onebot-bridge` 条目下、值是 `false`）。
+⚠️ 但**代码要重启宿主才生效**（新逻辑在 `lib/bridge.js` 里），配置热载不会带上新代码。
+
+**测试**：`guards-unit` 22 → **24 条**（4 条纯函数矩阵 + 2 条**端到端**）。
+端到端那两条拿 `agentCalls` 当探针（假 `agents.create` 先 +1 再抛）：默认档 8→8（连 agent 都不建），
+关掉后 8→9（真的进到模型这一层）——只测纯函数的话，键名写错、桥没把 config 传下去都测不出来。
+`settings-unit` 的行数断言随之 89 → **90**（开关 70 → 71）。
+
+**顺手被自己的量具抓了一次**：`privacy-unit` 报 `CHANGELOG.md` 里有本机家目录路径
+（我在 ⑭ 写了 `C:/Users/<真实用户名>/…`）。已换成 `C:/Users/<你>/…`——
+公开仓库里出现本机用户名是实打实的泄露，这条断言值得留着。

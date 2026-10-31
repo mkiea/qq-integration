@@ -246,6 +246,51 @@ check('词表改动后热重载', reloaded.includes('敏感词'), reloaded.trim(
   check('回应所有人不影响"验证期答题放行"的语义（verifyPending 仍按实参走）',
     allowsChat({ allowUsers: [], allowGroups: [], allowAllChats: false }, priv(1004), { verifyPending: true }) === true
     && allowsChat({ allowUsers: [], allowGroups: [], allowAllChats: false }, priv(1004), { verifyPending: false }) === false)
+
+  /**
+   * ★ 2026-10-31（用户「群聊其他用户跟他聊天不回应」）：
+   *   群成员是否也要进 `allowUsers`，从"藏在代码里的规则"变成显式开关 `groupCheckMembers`。
+   *
+   * 三条必须钉住的东西：
+   *   ① 默认（配置里**没有**这个键）= 老行为 ⇒ 不校验就没有回归；
+   *   ② 关掉 ⇒ 白名单群里任何成员都放行，但**群白名单照旧**、私聊不受影响；
+   *   ③ 关掉也**不能**把"群里没 @ 也回"带出来 —— 那是 replyOnlyWhenMentioned 的事，不在这个函数里。
+   */
+  check('默认（没有 groupCheckMembers 键）⇒ 沿用老行为：群成员仍要在 allowUsers 里',
+    allowsChat(base, grp(2002, 1003)) === false
+    && allowsChat({ ...base, groupCheckMembers: true }, grp(2002, 1003)) === false)
+  check('关掉 groupCheckMembers ⇒ 白名单群里任何成员都放行',
+    allowsChat({ ...base, groupCheckMembers: false }, grp(2002, 1003)) === true,
+    '')
+  check('关掉成员校验**不**放松群白名单：名单外的群仍然拒绝',
+    allowsChat({ ...base, groupCheckMembers: false }, grp(9999, 1003)) === false)
+  check('关掉成员校验**不**影响私聊：陌生人私聊照样拒绝',
+    allowsChat({ ...base, groupCheckMembers: false }, priv(1003)) === false)
+  check('allowUsers 为空 + 关掉成员校验 ⇒ 群里照样放行（不再有"名单空=谁都不行"的死结）',
+    allowsChat({ allowUsers: [], allowGroups: [2002], allowAllChats: false, groupCheckMembers: false }, grp(2002, 1003)) === true)
+}
+
+/**
+ * ★ 端到端复核（2026-10-31 用户「群聊其他用户跟他聊天不回应」）。
+ *
+ * 只测纯函数不够：键名写错、桥没把这个 config 传下去、或者门禁顺序不对，
+ * `allowsChat` 那几行照样全绿。这里拿 `agentCalls` 当探针 ——
+ * `ctx.agents.create` 会**先 +1 再抛**，所以"计数涨了"就等于"真的过了白名单与 @ 两道闸、
+ * 进到模型这一层了"，不需要真模型。
+ */
+{
+  bridge.config.groupCheckMembers = true
+  const beforeStrict = agentCalls
+  await send(groupMessage('在吗', { userId: 3003, atMe: true }))
+  check('端到端·默认档：群成员不在 allowUsers ⇒ 连 agent 都不建（历史行为没被改掉）',
+    agentCalls === beforeStrict, `agentCalls ${beforeStrict}→${agentCalls}`)
+
+  bridge.config.groupCheckMembers = false
+  const beforeOpen = agentCalls
+  await send(groupMessage('在吗', { userId: 3003, atMe: true }))
+  check('端到端·关掉成员校验：陌生人 @ 它也能进到模型这一层（就是这次要的行为）',
+    agentCalls === beforeOpen + 1, `agentCalls ${beforeOpen}→${agentCalls}`)
+  bridge.config.groupCheckMembers = true
 }
 
 bridge.stop()

@@ -185,10 +185,29 @@ dsh plugin --profile <profile> add <本目录>                # 注册进 profil
 
 | 查什么 | 怎么看 |
 |---|---|
+| **装没装上** | `node tools/doctor.mjs` —— 一条命令分「安装」「连通」两区报告，每一项失败都给可复制的修复命令 |
 | 插件加载了吗 | 控制台「运行快照」有 `v<版本号>`；`设置 → QQ 助手` 打得开 |
 | 用的是哪个模型 | 发 `!model` —— 只读，报 provider/model/是否被覆盖三行 |
 | 整链路通不通 | 控制台 **「一键体检」**（`/api/diagnose`），它按顺序查端口/进程/快照/日志 |
 | 白名单生效没 | 私聊机器人发一句；没反应就去 trace 找「白名单」被拒那条 |
+
+**`tools/doctor.mjs` 是只读的**：不装、不改、不重启，跑它不会让现状变好或变坏。装不上时先跑它，
+不用先翻文档猜是哪一步：
+
+```sh
+node tools/doctor.mjs             # 全部检查
+node tools/doctor.mjs --install   # 只查安装（不碰网络）
+node tools/doctor.mjs --net       # 只查连通
+node tools/doctor.mjs --json      # 机器可读，报 issue 时直接贴这段
+```
+
+它查的东西：Node 版本、`ws` 与官方 peer 能不能加载、`node_modules/@deepseek-ai` 联接到了哪个
+profile、哪个 profile 声明了本插件、在不在 `bundles` 里、patch 里有没有条目；连通区查
+6700（桥的反向 WS）、3080（宿主 HTTP，这两个**不是同一个东西**）、13000（Waylay 与登录态）、
+8880（控制台，没起是正常的）、运行快照新鲜度、最近一次消息处理走到第几个阶段。
+
+⚠️ 它**只在该报错时报错**：`WARN` 不一定是故障（例如"控制台没在跑"就是正常的，
+控制台是按需启动的独立进程）。
 
 ### 6. 从零安装最容易踩的六个坑
 
@@ -547,7 +566,7 @@ if (api.instanceId !== lastInstanceId) { lastInstanceId = api.instanceId; reRegi
 
 node test/control-unit.mjs        # 也可以逐个跑：node test/<name>-unit.mjs
 
-#    66 个 *-unit.mjs（4249 条断言）：桥的分支/命令/守卫、控制台 HTTP 与体检、录制回放与注入、注入安全边界、硬约束验收台、
+#    69 个 *-unit.mjs（4299 条断言）：桥的分支/命令/守卫、控制台 HTTP 与体检、录制回放与注入、注入安全边界、硬约束验收台、
 
 #    `/为什么` 的决策链翻译（why-unit）…
 

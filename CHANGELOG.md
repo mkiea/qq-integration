@@ -520,3 +520,51 @@ logger 保留（dsh 日志面板还看得到），但可观测性不再依赖它
 server 发了事件；bridge 忘了订阅、事件名拼错，那边依然全绿。所以 `guards-unit` 里
 用真实 bridge 造两条拒绝，断言 trace 的 `byStage.connect` 从 0 变 2、
 reason 里**读得出被拒的是哪个地址**。发出去的信号要证明真的有人收到了。
+
+**⑱ 「定时发送只发给我一个」——不是 bug，但暴露了不可见（2026-10-31 晚）**
+
+用户：「定时发送好像就给我发送了，没有给所有私聊都发送」。
+
+**取证链**（每一步都落在文件上，不靠猜）：
+
+1. 运行快照：`dailyReportEnabled:false`、`broadcastEnabled:false`、`notifyEnabled:false`、
+   `reminderEnabled:true` —— 排除日报/播报/通知，"定时发送"只能是**主动开口（proactive）**。
+2. `qq-trace.jsonl`：最近 3 小时有 `stage=proactive` 的事件，目标只有一个 chatKey。
+3. `qq-proactive.log`：从头到尾**只有** `u:331…` 一个会话的 armed/idle/FIRE 行，
+   另外两个会话**从未出现**；两次 FIRE 都是他的会话（12:20 饿了、16:41 嫌冷）。
+4. `qq-proactive-state.json`：另外两个会话**有状态但 plan=0 个时点**——没人为它们排计划。
+5. `cordis.patch.yml`：
+
+```yaml
+proactiveUsers: [ 331**** ]     ← 只写了主人一个
+allowUsers:     [331****, 215****, 283****, 336****]
+```
+
+`#proactiveTargets()` 的规则是**三者取交集**：`proactiveUsers`（非空时只准找这些人）∩
+白名单 ∩ **有没有过会话**。日志里那句"名单里没有可打扰的私聊（三者取交集）"就是这个。
+所以另外两个会话在 `proactiveUsers` 这一步就被过滤——**行为与设计完全一致，不是 bug**。
+
+顺带澄清一个容易混淆的语义：`allowUsers` 管"谁*能找*她"，`proactiveUsers` 管
+"她*能找*谁"——**两个方向都是准入，互不包含**。还有第三个约束：从没跟她聊过的人
+（allowUsers 里第 4 个号）不在候选里，因为没有会话就没有生物钟状态。
+
+**真正的缺陷是它完全不可见**：`proactiveUsers` 在面板里 **0 行**、运行快照里 **0 个键**。
+功能在跑、但没有任何界面能看见它的范围——用户排查只能问 AI 或翻 patch 文件。
+和 ⑯ 的 `allowBrowserOrigin` 是同一类教训：**功能在跑但范围不可见，等于没配置**。
+
+改动：
+- 面板新增「**主动开口（她来找你）**」组（白名单组之后）：总开关 / 只记不发的试跑开关 /
+  主动名单。组 note 与各行的 hint 把"三者取交集"和"名单里的人也得聊过天"写死。
+  `proactiveDryRun` 的文案还纠正了一个错误——它**默认是开**的（只记不发才是出厂安全默认）。
+- 运行快照 `#featureFlags()` 补 4 个键：`proactiveEnabled / proactiveDryRun /
+  proactiveTickSeconds / proactiveUsers`。名单不含密钥，可以进快照；不记的话
+  "她怎么只找他"这类问题永远只能翻配置。
+- `settings-unit` 位置断言从"白名单后面**紧接**对话基础"放宽为"白名单第一、
+  且在对话基础上面"——2026-10-20 用户约束的是**顺序**，不是"中间不能有别的组"，
+  两条原始事实都仍成立，并把它们逐条写死。
+
+要不要把另外两个号加进 `proactiveUsers`，是主人的决定（每个号都意味着她可能半夜
+主动开一条新会话）；本版不替用户改配置。
+
+全量 **69 套件 / 4305 条断言，0 失败**。改的是 `lib/panel.js` 与快照键集：
+**重启宿主 + 刷新控制台**后生效。

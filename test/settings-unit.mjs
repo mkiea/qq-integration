@@ -151,14 +151,18 @@ check('凡 schema 里带 apiKey/baseUrl/provider/model 的开关都标了依赖'
  *   外部审计 S1/S2 的 Origin 闸），总数 90 → **91**、开关 71 → 72。
  *   为什么必须进面板：这个键**默认关**，而关着的时候"网页的扫码页面连不上"是
  *   一个需要用户知道原因的失败——只写 YAML 的话，他只会看到"连不上"，然后去改端口。
+ * 2026-10-31 晚续：+3 行（新组「主动开口」）—— `proactiveEnabled`/`proactiveDryRun`
+ *   （布尔）+ `proactiveUsers`（名单），总数 91 → **94**、开关 72 → 74、名单 3 → 4。
+ *   起因同上：`proactiveUsers` 此前面板 0 行、快照 0 键，用户问"定时发送怎么只发给我"，
+ *   答案在配置里写着，他却没有任何界面能看见。**功能在跑但范围不可见，等于没配置。**
  */
-check('依赖分布合理（开箱即用与需准备兼有；总数 91 = 72 开关 + 12 数值 + 1 时段 + 3 名单 + 1 下拉 + 2 文本）',
+check('依赖分布合理（开箱即用与需准备兼有；总数 94 = 74 开关 + 12 数值 + 1 时段 + 4 名单 + 1 下拉 + 2 文本）',
   allRows.filter((entry) => entry.needs === '').length >= 5
   && allRows.filter((entry) => entry.needs !== '').length >= 20
-  && allRows.length === 91
-  && boolRows.length === 72 && numRows.length === 12
+  && allRows.length === 94
+  && boolRows.length === 74 && numRows.length === 12
   && allRows.filter((entry) => entry.type === 'times').length === 1
-  && allRows.filter((entry) => entry.type === 'list').length === 3
+  && allRows.filter((entry) => entry.type === 'list').length === 4
   && allRows.filter((entry) => entry.type === 'select').length === 1
   && allRows.filter((entry) => entry.type === 'text').length === 2,
   `开箱即用 ${allRows.filter((entry) => entry.needs === '').length} / 需准备 ${allRows.filter((entry) => entry.needs !== '').length} / 共 ${allRows.length}`)
@@ -893,9 +897,14 @@ await batchHandler(fakeRequest('POST', { entries: [{ key: 'ttsEnabled', value: f
  *   `allowUsers` / `allowGroups` 是 `z.array(z.number())`，而 OneBot 的 user_id 也是数字 ⇒
  *   写进去的必须是**数字**（写成字符串 `"2000000001"` 会让 `#allowed()` 的 includes 永远匹配不上）。
  */
-/** ★ 2026-10-20 用户指定位置：「白名单放到对话基础下边」→ 后来又「拉到对话基础上边」：**第一组**。 */
-check('★「AI账号与白名单」是**第一组**（在「对话基础」上面）',
-  PANEL_GROUPS[0]?.id === 'whitelist' && PANEL_GROUPS[1]?.id === 'chat',
+/** ★ 2026-10-20 用户指定位置：「白名单放到对话基础下边」→ 后来又「拉到对话基础上边」：**第一组**。
+ * 2026-10-31：白名单与对话基础之间插入了「主动开口」组（用户报障"定时发送只发给我一个"，
+ * 根因是 proactiveUsers 这个键此前完全不可见）。用户当初约束的本意是两条——白名单排第一、
+ * 在对话基础**上面**——两条都仍然成立，所以断言从"紧接"放宽为"顺序保持"，
+ * 并把两条原始约束逐条写死，防止以后有人把它挪到对话基础下面去。 */
+check('★「AI账号与白名单」是**第一组**、且在「对话基础」上面（2026-10-20 用户指定）',
+  PANEL_GROUPS[0]?.id === 'whitelist'
+  && PANEL_GROUPS.findIndex((group) => group.id === 'chat') > PANEL_GROUPS.findIndex((group) => group.id === 'whitelist'),
   brief(PANEL_GROUPS.slice(0, 3).map((group) => group.id)))
 /**
  * ★ v0.7.0「实验性」组的运行时状态行（这是 issue #4 说的 `chips` 的替代方案）：

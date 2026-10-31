@@ -541,7 +541,7 @@ if (api.instanceId !== lastInstanceId) { lastInstanceId = api.instanceId; reRegi
 
 node test/control-unit.mjs        # 也可以逐个跑：node test/<name>-unit.mjs
 
-#    66 个 *-unit.mjs（4226 条断言）：桥的分支/命令/守卫、控制台 HTTP 与体检、录制回放与注入、注入安全边界、硬约束验收台、
+#    66 个 *-unit.mjs（4249 条断言）：桥的分支/命令/守卫、控制台 HTTP 与体检、录制回放与注入、注入安全边界、硬约束验收台、
 
 #    `/为什么` 的决策链翻译（why-unit）…
 

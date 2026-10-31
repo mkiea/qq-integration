@@ -145,11 +145,16 @@
     justify-content:center; z-index:60; padding:16px; }
   .modal.off { display:none; }
   .modal-card { background:var(--panel); border:1px solid var(--line); border-radius:16px;
-    padding:16px 18px 18px; width:min(330px,92vw); box-shadow:0 18px 50px rgba(0,0,0,.28); }
+    padding:16px 18px 18px; width:min(330px,92vw); box-shadow:0 18px 50px rgba(0,0,0,.28);
+    /* 窄屏/小窗时卡片可能比视口还高：给它一个上限并允许滚动，
+       否则 flex 居中会把**顶部裁掉**——二维码正好在最上面，看着就是"弹窗里没有码"。 */
+    max-height:calc(100vh - 32px); overflow:auto; }
   .modal-head { display:flex; align-items:center; justify-content:space-between; margin-bottom:10px; }
   .modal-head b { font:600 15.5px/1.3 var(--serif); }
   .modal-x { border:0; background:transparent; color:var(--dim); font-size:16px; cursor:pointer; padding:2px 6px; }
-  #qrModalImg { width:100%; border-radius:10px; border:1px solid var(--line2); background:#fff; display:block; }
+  #qrModalImg { width:100%; border-radius:10px; border:1px solid var(--line2); background:#fff; display:block;
+    /* 同上：给图一个高度上限，别让它把卡片顶出屏幕 */
+    max-height:52vh; object-fit:contain; }
   .modal .meta { margin:8px 0 10px; font-size:12px; color:var(--dim); word-break:break-all; }
 </style>
 </head>
@@ -456,7 +461,8 @@
   <details class="group" id="gLogin">
     <summary>登录 · 二维码 <span class="gh">Waylay 扫码；未登录时自动展开</span><span class="gcount" id="loginCount"></span></summary>
   <section class="card" style="grid-column:1/-1">
-    <h2>登录二维码 <span class="meta" id="qrMeta">（Waylay 只在 QQ 侧产出新码时写一次文件；过期后文件就不再变化，看时间比看"文件在不在"可靠）</span></h2>
+    <h2>登录二维码 <span class="meta" id="loginState">（读取中…）</span></h2>
+    <div class="meta">Waylay 只在 QQ 侧产出新码时写一次文件；过期后文件就不再变化，看时间比看"文件在不在"可靠。</div>
     <div class="row">
       <button onclick="refreshQrNow()">刷新二维码</button>
       <button class="danger" onclick="act('/api/waylay/stop')">重开登录 ① 停止 Waylay（关掉那个 QQ）</button>
@@ -477,7 +483,8 @@
       <b>扫码登录 QQ</b>
       <button class="modal-x" title="关掉（本轮不再自动弹；再需要时去「登录·二维码」页）" onclick="closeQrModal(true)">✕</button>
     </div>
-    <img id="qrModalImg" alt="登录二维码" style="display:none" />
+    <img id="qrModalImg" alt="登录二维码" style="display:none"
+      onerror="this.style.display='none';document.getElementById('qrModalHint').textContent='⚠️ 二维码图片加载失败（文件可能正在被写入），5 秒后会自动重试'" />
     <div class="meta" id="qrModalHint">正在读取二维码…</div>
     <div class="row">
       <button onclick="refreshQrNow()">刷新二维码</button>
@@ -526,6 +533,16 @@ let loginAutoDone = false;
 // 未登录扫码浮层：关掉后本轮不再弹（换一轮登录会重置），它不切页、不抢滚动
 let qrModalDismissed = false;
 let loginNeededPrev = false;
+/**
+ * "上次已经登录成功时，那张二维码的 mtime"。
+ *
+ * 为什么需要它：`qrcode.png` **登录成功后不会消失**，所以"文件在、时间新"根本不能当
+ * "还没登录"用。把它记在 localStorage（不是内存）才能扛住控制台重启/刷新——
+ * 否则每次重开控制台都把同一张早就扫过的码当成"待扫码"，又弹一次。
+ */
+const LS_QR_SEEN = 'qqai.qrSeenMtime';
+// 最近一次 /api/status 算出来的"已登录"（供二维码页复用：那边是独立拉 /api/qr 的）
+let lastOnline = false;
 const pageErrors = [];
 
 /**
@@ -950,22 +967,52 @@ function render(status) {
   bridgePill.title = bridge.hint;
   const qqClients = status.processes?.qqClients || [];
   const qr = status.qr || {};
-  /**
-   * 登录分组：未登录时自动顶开一次——那时候唯一该做的下一步就是扫码或重开登录。
-   * 判据要窄，否则「Waylay 根本没启动」也会顶开，变成纯噪音：
-   *   ① 机器人不在线；且
-   *   ② 要么已经有二维码在等扫，要么 Waylay 端口（13000）在监听（说明正处在登录流程里）。
-   * 只顶一次；恢复在线后重置，下次真掉线还能再顶。
-   */
+  const waylay = status.waylay || {};
   const loginGroup = document.getElementById('gLogin');
   const waylayUp = (status.ports || []).some((p) => p.name === 'waylay' && p.listening);
-  const loginNeeded = !botUp && (waylayUp || qr.fresh === true);
+  /**
+   * 什么时候算「需要登录」（2026-10-31 用户：「不必要每次重启都弹一次，未登录弹即可」）。
+   *
+   * 旧判据 `!botUp && (waylayUp || qr.fresh)` 两个条件都不是"未登录"的证据，合起来就是
+   * "每次重启控制台都弹一次"：
+   *   ① `waylayUp` 只说明 Waylay 在跑——**登录之后它一直在跑**；
+   *   ② `qr.fresh` 只说明文件 5 分钟内写过——**登录成功后 qrcode.png 并不消失**。
+   *
+   * 现在有两件更硬的事实可用，优先用它们：
+   *   · `waylay.loggedIn`：Waylay 自己 `/api/status` 回的 `logged_in`（**它才是权威**）；
+   *   · "一张没见过的新码"：在线时把当时那张码的 mtime 记进 localStorage，
+   *     只有之后出现的**更新**的码才算"要登录"。
+   */
+  const qrMtime = Number(qr.mtimeMs || 0);
+  const qrSeenMtime = (() => { try { return Number(localStorage.getItem(LS_QR_SEEN) || 0) } catch { return 0 } })();
+  const decision = decideLogin({ botUp, accountOnline, loggedIn: waylay.loggedIn, qr, seenMtime: qrSeenMtime });
+  const qrIsNew = decision.qrIsNew;
+  if (decision.online && qrMtime > qrSeenMtime) {
+    // 在线 = 这张码已经用过了。记下来，别再拿它当"待扫码"。
+    try { localStorage.setItem(LS_QR_SEEN, String(qrMtime)) } catch { /* 隐私模式写不了，只影响"不重复弹" */ }
+  }
+  const loginNeeded = decision.needed;
+  lastOnline = decision.online;
+  const loginStateText = loginSummary({
+    online: decision.online,
+    loggedIn: waylay.loggedIn,
+    nickname: waylay.nickname || '',
+    uin: waylay.uin || '',
+    qrIsNew,
+    qr,
+    waylayUp,
+  });
+  const loginStateEl = document.getElementById('loginState');
+  if (loginStateEl) {
+    loginStateEl.textContent = loginStateText;
+    loginStateEl.style.color = decision.online ? 'var(--ok, #2f7d4f)' : (loginNeeded ? 'var(--warn)' : 'var(--dim)');
+  }
   const loginCountEl = document.getElementById('loginCount');
   if (loginCountEl) {
-    loginCountEl.textContent = botUp ? '' : (loginNeeded ? '待扫码' : '');
+    loginCountEl.textContent = decision.online ? '' : (loginNeeded ? '待扫码' : '');
     loginCountEl.style.color = loginNeeded ? 'var(--warn)' : '';
   }
-  if (botUp) loginAutoDone = false;
+  if (decision.online) loginAutoDone = false;
   else if (loginNeeded && !loginAutoDone && loginGroup) {
     // 页面模式：不切页抢人；当前就在登录页才展开，否则侧栏「登录」标红
     loginAutoDone = true;
@@ -975,12 +1022,11 @@ function render(status) {
   // 未登录就弹出扫码浮层（浮在页面上，不动当前页；用户关掉后本轮不再打扰）
   if (loginNeeded && !loginNeededPrev) qrModalDismissed = false;
   loginNeededPrev = loginNeeded;
-  if (botUp) closeQrModal();
+  if (decision.online) closeQrModal();
   else if (loginNeeded && !qrModalDismissed) openQrModal();
   document.getElementById('procMeta').innerHTML =
     `个人 QQ 客户端：${qqClients.length} 个（<b>控制台不会结束它们</b>）｜被注入的那个 QQ 走 Waylay 端口行识别（13000）`;
   // ── Waylay（v0.8.0 起唯一的后端）──
-  const waylay = status.waylay || {};
   renderWaylay(waylay);
   const waylayStop = document.getElementById('waylayStopBtn');
   if (waylayStop) {
@@ -1442,6 +1488,56 @@ async function replayDiff() {
 }
 
 // ── 未登录扫码浮层 ──
+/**
+ * 要不要弹扫码浮层（纯函数，`test/console-debug-unit.mjs` 会把这段源码抽出来跑矩阵）。
+ *
+ * 抽出来的理由：这条判据被用户纠过（「不必要每次重启都弹一次，未登录弹即可」），
+ * 而它埋在 `render()` 里时只能靠肉眼和截图验证——截图看不出"这次弹是因为码真的换了、
+ * 还是因为 Waylay 一直在监听"。
+ *
+ * 判据：**只认"一张没见过的新码"**。
+ *   · 机器人已在线（`botUp`，或 QQ 侧明确报 `bot_online`）⇒ 不需要登录，
+ *     哪怕文件夹里还躺着上次登录用的那张旧码（`qrcode.png` 登录后不会消失）；
+ *   · 码的 mtime 不比"上次在线时记下的"更新 ⇒ 是老码，不弹；
+ *   · `waylayUp` **不参与**：Waylay 登录之后一直在跑，拿它当"要登录"的信号必然每次误报。
+ */
+function decideLogin({ botUp, accountOnline, loggedIn, qr, seenMtime }) {
+  const qrMtime = Number(qr?.mtimeMs || 0)
+  const qrIsNew = qr?.fresh === true && qrMtime > Number(seenMtime || 0)
+  // `loggedIn` 是 Waylay 自己报的 logged_in（**权威**）；另外两个是退路：
+  // 6700 上有连接（botUp）或 QQ 侧报 bot_online，都足以说明"已经登录了"。
+  const online = loggedIn === true || botUp === true || accountOnline === true
+  // Waylay 明确说没登录才算"要登录"；它没表态（拿不到 /api/status）时也按"没登录"处理，
+  // 但必须有**一张没见过的新码**才弹——没有码的弹窗除了挡视线什么也做不了。
+  const needed = !online && qrIsNew
+  return { qrMtime, qrIsNew, online, needed }
+}
+
+/**
+ * 登录页抬头那一句话（也是纯函数，同样进测试矩阵）。
+ *
+ * 为什么值得单独写：用户的原话是「控制台登录页面就显示已登录即可」——
+ * 也就是说这一行必须**在已登录时明确说已登录**，而不是继续显示"等待扫码"。
+ * 以前这里只有 `qrState`（"✅ 新鲜（31 分钟前）"），已登录的时候看着像还在等扫码。
+ */
+function loginSummary({ online, loggedIn, nickname, uin, qrIsNew, qr, waylayUp }) {
+  const ago = qr?.exists
+    ? (qr.ageSeconds >= 60 ? `${Math.round(qr.ageSeconds / 60)} 分钟前` : `${qr.ageSeconds} 秒前`)
+    : ''
+  const who = [nickname, uin].filter(Boolean).join(' ')
+  if (online) {
+    return loggedIn === true
+      ? `✅ 已登录${who ? '（' + who + '）' : ''}`
+      : '✅ 已登录（按连接判断；Waylay 没回登录态）'
+  }
+  // 顺序按"接下来该做什么"排：Waylay 没跑是最根本的一条，先报它，
+  // 否则会对着一个没运行的进程说"二维码已过期"，人只会去点刷新（点也没用）。
+  if (!waylayUp) return '⚪ 未登录：Waylay 没在运行（点下方「启动 Waylay」）'
+  if (qrIsNew) return `⚠️ 未登录：有一张新二维码待扫（${ago}生成）`
+  if (qr?.exists && qr.fresh !== true) return `⚠️ 未登录：二维码已过期（${ago}生成），点「刷新二维码」重新出码`
+  if (loggedIn === false) return '⚠️ 未登录（Waylay 报 logged_in=false），还没有可用二维码：点「刷新二维码」或按下面「重开登录」'
+  return '⚪ 未登录：Waylay 在跑，但还没有二维码（刚启动要等几秒）'
+}
 // 复用 /api/qr（Waylay 出的 qrcode.png）。服务端只回过期不了的新码，
 // 这里 5 秒跟进一次：Waylay 一写出新码，图上就换成最新的（失效的码不显示）。
 // 它只是浮层：不切页、不滚屏，关掉后本轮不再自动弹。
@@ -1504,7 +1600,14 @@ async function loadQr() {
     if (r.ok !== true) { state.textContent = ''; hint.textContent = '⚠️ ' + (r.reason || '二维码不可用'); return; }
     if (r.dataUrl) { img.src = r.dataUrl; img.style.display = ''; } else { img.style.display = 'none'; }
     const ago = r.exists ? (r.ageSeconds >= 60 ? Math.round(r.ageSeconds / 60) + ' 分钟前' : r.ageSeconds + ' 秒前') : '—';
-    state.textContent = r.exists ? (r.fresh ? '✅ 新鲜（' + ago + '）' : '⚠️ 已过期（' + ago + '）') : '⚠️ 还没有二维码';
+    /**
+     * 「已登录」时**不要**再报"新鲜/待扫"（2026-10-31 用户：「登录页面就显示已登录即可」）。
+     * qrcode.png 登录成功后不会消失，只看文件时间会让已登录的页面一直像在等扫码。
+     */
+    const online = lastOnline === true;
+    state.textContent = online
+      ? (r.exists ? `✅ 已登录；这张是 ${ago} 的旧码，不用再扫` : '✅ 已登录（没有二维码文件）')
+      : (r.exists ? (r.fresh ? '✅ 有可扫的新码（' + ago + '）' : '⚠️ 已过期（' + ago + '）') : '⚠️ 还没有二维码');
     hint.textContent = r.hint || '';
   } catch (error) {
     state.textContent = '';

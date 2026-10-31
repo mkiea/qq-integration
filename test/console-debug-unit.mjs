@@ -251,6 +251,78 @@ server.close()
   const missingIds = [...new Set(referencedIds)].filter((id) => !declaredIds.has(id))
   check('面板引用的元素 id 都存在', missingIds.length === 0, missingIds.join(','))
 
+  /**
+   * 登录弹窗判据（2026-10-31 用户：「不必要每次重启都弹一次，未登录弹即可」）。
+   *
+   * 老判据 `!botUp && (waylayUp || qr.fresh)` 里两个条件都不是"未登录"的证据：
+   *   · `waylayUp` 只说明 Waylay 在跑——**登录之后它一直在跑**；
+   *   · `qr.fresh` 只说明文件 5 分钟内写过——**登录成功后 qrcode.png 并不消失**。
+   * 合起来就是"每次重启控制台都弹一次"。现在只认"一张没见过的新码"
+   * （mtime 比上次在线时记下的更新）。这条断言防的是以后有人图省事改回宽松判据。
+   */
+  check('登录弹窗只在出现"没见过的新二维码"时才触发（不是 Waylay 在跑就弹）',
+    (() => {
+      // 判据只能在**代码**里找，不能把解释这条判据的注释也算进去
+      // （注释里原样引用了老表达式，否则这条断言会自己把自己判红）
+      const codeOnly = script.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '')
+      return codeOnly.includes('LS_QR_SEEN') && codeOnly.includes('qrIsNew')
+        && !/!botUp && \(waylayUp \|\| qr\.fresh/.test(codeOnly)
+    })())
+  check('登录页抬头能说清已登录/未登录（不能只靠"它不说话"去猜）',
+    ui.includes('id="loginState"') && script.includes('loginStateEl') && /已登录/.test(script))
+  check('扫码弹窗有高度上限（小窗/高 DPI 下二维码不会被裁出视口）',
+    /\.modal-card \{[^}]*max-height:calc\(100vh - 32px\)/.test(ui)
+    && /#qrModalImg \{[^}]*max-height:52vh/.test(ui))
+
+  /**
+   * 判据矩阵：把页面里那两个**纯函数**的源码抽出来直接执行。
+   *
+   * 为什么值得这么做：这条判据的真实失败模式是"看起来对"——弹窗照常出现，
+   * 只是它每次重启都弹、而且弹出来还没有码。静态断言只能证明"代码里有这行"，
+   * 证明不了"这一档该不该弹、该说什么话"。
+   */
+  const extract = (name) => new RegExp(`function ${name}\\([\\s\\S]*?\\n\\}`).exec(script)?.[0] ?? ''
+  const decideSrc = extract('decideLogin')
+  const summarySrc = extract('loginSummary')
+  let decide = null
+  let summary = null
+  try { decide = new Function(`${decideSrc}; return decideLogin`)() } catch { decide = null }
+  try { summary = new Function(`return (${summarySrc.replace(/^function loginSummary/, 'function')})`)() } catch { summary = null }
+  check('登录判据能从页面源码里抽出来执行（纯函数没被内联回去）',
+    typeof decide === 'function' && typeof summary === 'function', `${decideSrc.length}+${summarySrc.length} 字符`)
+  if (typeof decide === 'function') {
+    const seen = 1700000000000
+    const qrAt = (mtimeMs, fresh = true) => ({ exists: true, mtimeMs, fresh, ageSeconds: 3 })
+    check('Waylay 说已登录 + 还是那张旧码 ⇒ 不弹（"每次重启控制台都弹一次"的病灶）',
+      decide({ botUp: false, accountOnline: undefined, loggedIn: true, qr: qrAt(seen - 60000), seenMtime: seen }).needed === false)
+    check('Waylay 说已登录 + 就算码是新的 ⇒ 也不弹（登录态优先，码可能是残留）',
+      decide({ botUp: false, accountOnline: undefined, loggedIn: true, qr: qrAt(seen + 60000), seenMtime: seen }).needed === false)
+    check('未登录 + 一张没见过的新码 ⇒ 弹',
+      decide({ botUp: false, accountOnline: undefined, loggedIn: false, qr: qrAt(seen + 60000), seenMtime: seen }).needed === true)
+    check('未登录 + 还是用过的旧码 ⇒ 不弹（文件在 ≠ 要登录）',
+      decide({ botUp: false, accountOnline: undefined, loggedIn: false, qr: qrAt(seen - 1), seenMtime: seen }).needed === false)
+    check('拿不到 Waylay 登录态时，6700 上有连接也算已登录 ⇒ 不弹',
+      decide({ botUp: true, accountOnline: undefined, loggedIn: undefined, qr: qrAt(seen + 60000), seenMtime: seen }).needed === false)
+    check('QQ 侧报 bot_online 也算已登录 ⇒ 不弹',
+      decide({ botUp: false, accountOnline: true, loggedIn: undefined, qr: qrAt(seen + 60000), seenMtime: seen }).needed === false)
+    check('码已过期（fresh=false）⇒ 不弹，交给登录页的「刷新二维码」',
+      decide({ botUp: false, accountOnline: undefined, loggedIn: false, qr: { exists: true, mtimeMs: seen + 60000, fresh: false, ageSeconds: 900 }, seenMtime: seen }).needed === false)
+    check('从没记过（首次运行/清了缓存）⇒ 有新码就弹一次',
+      decide({ botUp: false, accountOnline: undefined, loggedIn: false, qr: qrAt(seen), seenMtime: 0 }).needed === true)
+  }
+  if (typeof summary === 'function') {
+    const base = { qrIsNew: false, qr: { exists: false }, waylayUp: true }
+    check('登录页抬头：已登录时明确写"已登录"+昵称（用户要的就是这句话）',
+      summary({ ...base, online: true, loggedIn: true, nickname: '猪猪鱼', uin: '10001' }).includes('已登录')
+      && summary({ ...base, online: true, loggedIn: true, nickname: '猪猪鱼', uin: '10001' }).includes('猪猪鱼'))
+    check('登录页抬头：未登录 + 有新码 ⇒ 说"待扫"',
+      summary({ ...base, online: false, loggedIn: false, qrIsNew: true, qr: { exists: true, fresh: true, ageSeconds: 12 } }).includes('新二维码'))
+    check('登录页抬头：未登录 + 码过期 ⇒ 说"已过期"并给出动作',
+      summary({ ...base, online: false, loggedIn: false, qr: { exists: true, fresh: false, ageSeconds: 900 } }).includes('已过期'))
+    check('登录页抬头：Waylay 没跑 ⇒ 说"没在运行"',
+      summary({ ...base, online: false, loggedIn: false, waylayUp: false }).includes('没在运行'))
+  }
+
   const serverSource = readFileSync(new URL('../control/lib/server.mjs', import.meta.url), 'utf8')
   /**
    * ⚠️ 2026-10-31 修量具：原来这里是 `/['"`](\/api\/[a-z/]+)/`——**字符类里没有 `-`**，

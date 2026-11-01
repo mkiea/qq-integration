@@ -322,6 +322,28 @@
   </section>
   </details>
 
+  <details class="group" id="gPersona" open>
+    <summary>人设 <span class="gh">她"是谁"全在 AGENTS.md 里；改完点保存，旧版自动备份</span></summary>
+    <section class="card" style="grid-column:1/-1">
+      <h2>人设 · AGENTS.md <span class="meta" id="personaMeta">（改这个文件就是改她这个人，不是改参数）</span></h2>
+      <div class="row">
+        <button class="primary" title="保存到 AGENTS.md；旧内容会自动备份成 AGENTS.backup-<时间>.md" onclick="savePersona()">保存</button>
+        <button title="丢掉未保存的修改，重新从磁盘读一遍" onclick="loadPersona(true)">重新载入</button>
+        <span class="meta" id="personaState"></span>
+      </div>
+      <div class="meta" id="personaPath" style="margin:4px 0 6px"></div>
+      <textarea id="personaText" spellcheck="false"
+        title="这是她的全部人设：说话规矩、底线、对谁说什么。改完点「保存」。"
+        oninput="this.dataset.dirty='1'"
+        style="width:100%;min-height:340px;font-family:ui-monospace,Consolas,monospace;font-size:13px;line-height:1.5;padding:10px;border-radius:6px;border:1px solid #ccc;resize:vertical"
+        placeholder="（这个文件还不存在。写点东西，然后保存。）"></textarea>
+      <div class="meta" style="margin-top:6px">
+        保存后 <b>不会立刻改变正在进行的对话</b>：DSH 在下一次创建会话时才读它。
+        想马上生效就重启宿主（或等这个会话自然结束）。
+      </div>
+    </section>
+  </details>
+
   <details class="group" id="gDiag">
     <summary>诊断 · 体检与验收 <span class="gh">出错才需要看；有 ❌ 时侧栏标红</span><span class="gcount" id="diagCount"></span></summary>
   <section class="card" style="grid-column:1/-1">
@@ -1394,6 +1416,57 @@ async function loadJobs() {
   }
 }
 
+/**
+ * 人设读写（2026-11-01）。
+ *
+ * `dirty` 标记的意义：这个面板会被定时刷新带动，如果在用户打了半屏字之后
+ * 自动把内容冲掉，那比没有这个面板更糟。所以只有 `force=true`（用户主动点重新载入、
+ * 或刚保存完）才覆盖编辑框。
+ */
+async function loadPersona(force) {
+  const el = document.getElementById('personaText');
+  const state = document.getElementById('personaState');
+  const pathEl = document.getElementById('personaPath');
+  if (!el || !state) return;
+  if (!force && el.dataset.dirty === '1') return;
+  state.textContent = '读取中…';
+  try {
+    const r = await api('/api/persona');
+    if (r.ok !== true) { state.textContent = '⚠️ ' + (r.reason || '读不到人设'); return; }
+    el.value = r.text || '';
+    el.dataset.dirty = '0';
+    pathEl.innerHTML = '文件：<code>' + escapeHtml(r.file) + '</code>'
+      + (r.exists
+        ? ' · ' + r.bytes + ' 字节 · ' + r.lines + ' 行 · 改于 ' + new Date(r.updatedAt).toLocaleString('zh-CN', { hour12: false })
+        : ' · <b>（还不存在，点保存会创建）</b>');
+    state.textContent = '';
+  } catch (error) {
+    state.textContent = '⚠️ ' + error.message;
+  }
+}
+
+async function savePersona() {
+  const el = document.getElementById('personaText');
+  const state = document.getElementById('personaState');
+  if (!el || !state) return;
+  const text = el.value;
+  if (text.trim() === '') {
+    // 空文件等于"她没有性格"。可以存，但要让用户明确知道自己在干什么。
+    if (!confirm('人设要保存成空的？这等于她没有性格，只会以助手的样子说话。')) return;
+  }
+  state.textContent = '保存中…';
+  try {
+    const r = await api('/api/persona', { method: 'POST', body: JSON.stringify({ text }) });
+    if (r.ok !== true) { state.textContent = '⚠️ ' + (r.reason || '保存失败'); return; }
+    el.dataset.dirty = '0';
+    const backupName = r.backup ? String(r.backup).split(/[\\/]/).pop() : '';
+    state.textContent = '✅ 已保存 ' + r.bytes + ' 字节' + (backupName ? '（旧版备份：' + backupName + '）' : '');
+    loadPersona(true);
+  } catch (error) {
+    state.textContent = '⚠️ ' + error.message;
+  }
+}
+
 async function loadGroups() {
   const out = document.getElementById('groupsOut');
   const state = document.getElementById('groupsState');
@@ -1661,6 +1734,7 @@ function loadDataGroup() {
   loadPerf();
   loadJobs();
   loadGroups();
+  loadPersona();
 }
 
 refresh();
@@ -1674,6 +1748,8 @@ if (groupOpen('gData')) loadDataGroup();
 // 点开哪个组就补哪个组的数据（幂等：手动点第二遍只是刷新一次）
 const GROUP_ENTRY = {
   gData: loadDataGroup,
+  // 不传 force：有未保存的改动时 loadPersona 自己会跳过，不会把用户打的字冲掉。
+  gPersona: () => loadPersona(),
   gDiag: () => { runDiagnose(); loadAcceptance(); },
   gLogin: () => loadQr(),
 };

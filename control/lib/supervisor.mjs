@@ -1260,6 +1260,63 @@ export function createSupervisor(config, deps = {}) {
     return { ok: true, ...groupsReport(runtime(), { now: now() }) }
   }
 
+  /**
+   * 「人设」面板：读写数据目录下的 `AGENTS.md`（2026-11-01，用户报「人设设置没了啊」）。
+   *
+   * 为什么只认这一个文件：人设本体就是 DSH 的 `AGENTS.md`（README 第 616 行写明本插件
+   * **不内置人设**，灵魂由人设文件/记忆提供）。做成通用文件编辑器等于给控制台开一个
+   * 任意文件写入的口子，所以路径在这里**钉死**，不接受调用方传任何路径参数。
+   *
+   * 保存前一定留备份：人设是手写长文，一次误覆盖就是几小时的活。
+   */
+  function personaFile() {
+    const cwd = String(config.cwd ?? '').trim()
+    return cwd ? join(cwd, 'AGENTS.md') : ''
+  }
+
+  function personaRead() {
+    const file = personaFile()
+    if (!file) return { ok: false, reason: '还没配置数据目录（cwd），不知道人设文件放哪' }
+    if (!existsSync(file)) return { ok: true, file, exists: false, text: '', bytes: 0, lines: 0 }
+    try {
+      const text = readFileSync(file, 'utf8')
+      const st = statSync(file)
+      return {
+        ok: true, file, exists: true, text,
+        bytes: st.size, lines: text.split('\n').length, updatedAt: st.mtimeMs,
+      }
+    } catch (error) {
+      return { ok: false, reason: `读不了 ${file}：${error.message}` }
+    }
+  }
+
+  function personaWrite(text) {
+    const file = personaFile()
+    if (!file) return { ok: false, reason: '还没配置数据目录（cwd），不知道人设文件放哪' }
+    const body = String(text ?? '')
+    // 上限要对齐控制台的 MAX_BODY_BYTES（64 KiB）：写成更大的值只会让用户在
+    // 「保存」时收到一个 413，而不是在这里就被告知"太大了"。
+    const max = 60 * 1024
+    if (body.length > max) return { ok: false, reason: `人设超过 ${Math.round(max / 1024)} KB，控制台不接这么大的文件` }
+    let backup = ''
+    try {
+      if (existsSync(file)) {
+        const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14)
+        backup = join(dirname(file), `AGENTS.backup-${stamp}.md`)
+        writeFileSync(backup, readFileSync(file))
+      }
+      writeFileSync(file, body, 'utf8')
+    } catch (error) {
+      return { ok: false, reason: `保存失败：${error.message}` }
+    }
+    return {
+      ok: true, file, backup, bytes: body.length,
+      // 这句必须给准：DSH 读 AGENTS.md 的时机决定了"保存 ≠ 立即生效"。
+      // 说"已生效"而实际要重开会话，等于制造一个查不出来的失望。
+      note: '已保存。DSH 在**下一次创建会话**时读它 —— 正在聊的那个会话要重开才生效。',
+    }
+  }
+
   return {
     status, startHost, stopHost, restartHost, freePort, startTts, stopTts, stopAll, startAll, qr,
     // Waylay：v0.8.0 起唯一的后端
@@ -1267,6 +1324,8 @@ export function createSupervisor(config, deps = {}) {
     traceEvents, traceChain, runtime, diagnose, exportBundle, acceptance,
     inboxList, replay, inject, clearQueue, archiveStats, archiveSearch,
     perf, jobsView, groups, openDataDir, setDataDir, browseDataDir,
+    // 人设读写（只认 cwd/AGENTS.md，见 personaFile 的注释）
+    personaRead, personaWrite,
     // 每个调用方（每个 SSE 连接）拿一份独立 tailer：共用模块级单例会让两个面板互相"偷"事件，
     // 也会让同一进程里的第二个 supervisor 读到别人的事件文件。
     tailer: () => createTraceTailer(config.logs?.trace ?? ''),

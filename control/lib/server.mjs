@@ -161,6 +161,20 @@ export function createControlHandler({ config, token, api, ui = '', uiFile = '',
         json(response, 200, { ok: true, ...(await api.status()) })
         return
       }
+      /**
+       * 人设读写（2026-11-01）。
+       *
+       * 只有读、写两条，路径由 supervisor 那边钉死在 `cwd/AGENTS.md`，这里不接受任何
+       * 路径参数 —— 控制台不该变成一个通用文件编辑器，那等于把它变成一个写入漏洞。
+       */
+      if (request.method === 'GET' && path === '/api/persona') {
+        if (typeof api.personaRead !== 'function') {
+          json(response, 200, { ok: false, reason: '当前控制台版本不支持读人设' })
+          return
+        }
+        json(response, 200, api.personaRead())
+        return
+      }
       if (request.method === 'GET' && path === '/api/logs') {
         const name = url.searchParams.get('name') ?? 'hostOut'
         if (!LOG_NAMES.includes(name)) {
@@ -456,6 +470,19 @@ export function createControlHandler({ config, token, api, ui = '', uiFile = '',
               return { ok: false, reason: `请求里缺少 path（收到 ${JSON.stringify(body?.path ?? null)}）；要清空请显式传空串` }
             }
             return api.setDataDir(body.path)
+          },
+          /**
+           * 保存人设（2026-11-01）。
+           *
+           * 只收 `text`，路径不接收 —— 写哪儿由 supervisor 的 `personaFile()` 决定。
+           * 这样即使控制台被恶意页面驱动，也只能改那一个人设文件，动不了别处。
+           */
+          '/api/persona': () => {
+            if (typeof api.personaWrite !== 'function') return { ok: false, reason: '当前控制台版本不支持改人设' }
+            if (typeof body.text !== 'string') {
+              return { ok: false, reason: `请求里缺少 text（收到 ${JSON.stringify(body?.text ?? null)}）` }
+            }
+            return api.personaWrite(body.text)
           },
           '/api/config': () => {
             if (typeof saveConfig !== 'function') return { ok: false, reason: '配置保存不可用' }

@@ -9,7 +9,7 @@
 import { execFile, spawn } from 'node:child_process'
 import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { request as httpRequest } from 'node:http'
-import { dirname, isAbsolute, join } from 'node:path'
+import { basename, dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { PORT_LABELS, configWarnings } from './config.mjs'
 import { describeStatus, parseListenerPid, stopPlan, waylayLaunchCommand, waylayLogPath, waylayQrPath, WAYLAY_BAT_HINT } from '../../lib/waylay-launch.js'
@@ -1290,6 +1290,61 @@ export function createSupervisor(config, deps = {}) {
     }
   }
 
+  /**
+   * 备份文件名的时间戳：**本地时间**，且同秒不撞名。
+   *
+   * 原来用 `toISOString()`：那是 UTC，比本地时间早 8 小时，备份文件名看着"更旧"，
+   * 排查时容易把先后顺序读反。更要紧的是同一秒内保存两次会算出同一个名字 ——
+   * 第二份备份把第一份**覆盖**掉，而人设是手写长文，那份被盖掉的往往就是要找的那版。
+   */
+  function personaBackupName(dir, at = new Date()) {
+    const pad = (n) => String(n).padStart(2, '0')
+    const stamp = `${at.getFullYear()}${pad(at.getMonth() + 1)}${pad(at.getDate())}`
+      + `-${pad(at.getHours())}${pad(at.getMinutes())}${pad(at.getSeconds())}`
+    let candidate = join(dir, `AGENTS.backup-${stamp}.md`)
+    for (let i = 2; existsSync(candidate); i += 1) {
+      candidate = join(dir, `AGENTS.backup-${stamp}-${i}.md`)
+    }
+    return candidate
+  }
+
+  /** 列出现有备份（新的在前）。只读，不删 —— 备份是用户的退路，删它不属于"顺手清理"。 */
+  function personaBackups() {
+    const file = personaFile()
+    const dir = file ? dirname(file) : ''
+    if (!dir || !existsSync(dir)) return []
+    let names = []
+    try { names = readdirSync(dir).filter((name) => /^AGENTS\.backup-.+\.md$/.test(name)) } catch { return [] }
+    const rows = names.map((name) => {
+      const full = join(dir, name)
+      try {
+        const st = statSync(full)
+        return { name, bytes: st.size, updatedAt: st.mtimeMs }
+      } catch { return null }
+    }).filter((row) => row !== null)
+    // 排序按**写入时间**，不按文件名：同秒撞名时文件名是 `…-212645.md` 和 `…-212645-2.md`，
+    // 而 `-`(0x2d) 小于 `.`(0x2e)，纯字典序会把后写的那份排到前面 —— 顺序反了。
+    rows.sort((a, b) => (b.updatedAt - a.updatedAt) || (a.name < b.name ? 1 : a.name > b.name ? -1 : 0))
+    return rows
+  }
+
+  /** 读一份备份的正文。名字已在 server 层校验过形状，这里再 basename 一次防穿越。 */
+  function personaBackupText(name) {
+    const file = personaFile()
+    const dir = file ? dirname(file) : ''
+    const base = basename(String(name ?? ''))
+    if (!dir || base !== String(name ?? '') || !/^AGENTS\.backup-[^\\/]+\.md$/.test(base)) {
+      return { ok: false, reason: '备份名不合法' }
+    }
+    const full = join(dir, base)
+    try {
+      const text = readFileSync(full, 'utf8')
+      return { ok: true, name: base, text, bytes: Buffer.byteLength(text, 'utf8') }
+    } catch (error) {
+      return { ok: false, reason: `读不了 ${base}：${error.message}` }
+    }
+  }
+
   function personaWrite(text) {
     const file = personaFile()
     if (!file) return { ok: false, reason: '还没配置数据目录（cwd），不知道人设文件放哪' }
@@ -1301,20 +1356,30 @@ export function createSupervisor(config, deps = {}) {
     let backup = ''
     try {
       if (existsSync(file)) {
-        const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14)
-        backup = join(dirname(file), `AGENTS.backup-${stamp}.md`)
+        backup = personaBackupName(dirname(file))
         writeFileSync(backup, readFileSync(file))
       }
       writeFileSync(file, body, 'utf8')
     } catch (error) {
       return { ok: false, reason: `保存失败：${error.message}` }
     }
-    return {
-      ok: true, file, backup, bytes: body.length,
-      // 这句必须给准：DSH 读 AGENTS.md 的时机决定了"保存 ≠ 立即生效"。
-      // 说"已生效"而实际要重开会话，等于制造一个查不出来的失望。
-      note: '已保存。DSH 在**下一次创建会话**时读它 —— 正在聊的那个会话要重开才生效。',
-    }
+    /**
+     * `note` 说的是**宿主实际怎么用这个文件**，不能拍脑袋。
+     *
+     * 事实（`@deepseek-ai/dsh-agent-instructions`，本 profile 已挂、`maxBytes: 32768`）：
+     *   - 会话建立时读一次基线；
+     *   - 之后**每轮**都会对账，文件变了就补一条「Updated instructions from: …」的更新块；
+     *   - 内容是作为 instruction 段**追加**进 system 的（`<system-reminder>` 包着），
+     *     不替换宿主自己的基础指令；
+     *   - 有 32 KiB 预算，**超过会截断/省略**（还会在提示里写一行 budget 说明）。
+     * 所以"要重开会话才生效"是错的（那是没核实前的推测），真正需要提醒的是预算。
+     */
+    const budget = 32 * 1024
+    const bytes = Buffer.byteLength(body, 'utf8')
+    const note = bytes > budget
+      ? `已保存 ${bytes} 字节，但宿主的人设预算只有 ${Math.round(budget / 1024)} KiB —— 超出的部分会被截断，她只能看到前半段。建议拆成多个文件或精简。`
+      : `已保存。宿主人设预算 ${Math.round(budget / 1024)} KiB，当前用到 ${bytes} 字节。改动会在下一轮生效（宿主逐轮对账）。`
+    return { ok: true, file, backup, bytes, note }
   }
 
   return {
@@ -1324,8 +1389,8 @@ export function createSupervisor(config, deps = {}) {
     traceEvents, traceChain, runtime, diagnose, exportBundle, acceptance,
     inboxList, replay, inject, clearQueue, archiveStats, archiveSearch,
     perf, jobsView, groups, openDataDir, setDataDir, browseDataDir,
-    // 人设读写（只认 cwd/AGENTS.md，见 personaFile 的注释）
-    personaRead, personaWrite,
+    // 人设读写（只认 cwd/AGENTS.md，见 personaFile 的注释）；backups 只读不删
+    personaRead, personaWrite, personaBackups, personaBackupText,
     // 每个调用方（每个 SSE 连接）拿一份独立 tailer：共用模块级单例会让两个面板互相"偷"事件，
     // 也会让同一进程里的第二个 supervisor 读到别人的事件文件。
     tailer: () => createTraceTailer(config.logs?.trace ?? ''),

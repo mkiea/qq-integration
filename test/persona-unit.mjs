@@ -101,6 +101,82 @@ const makeSup = (cwd) => createSupervisor({ cwd, logs: {}, ports: { control: 0, 
   check('F 写也一样被挡住', w.ok === false)
 }
 
+// ---------- G. 备份名用本地时间，同一秒两次保存不互相覆盖（2026-11-01 夜加） ----------
+/**
+ * 原来用 `new Date().toISOString()`：那是 **UTC**，比本地时间早 8 小时 ——
+ * 备份文件名看着"更旧"，排查时会把先后顺序读反。
+ * 更要紧的是同一秒内连续保存会算出同一个名字，第二份把第一份**覆盖**掉，
+ * 而人设是手写长文，被盖掉的往往就是要找的那版。
+ */
+{
+  const cwd = mkdtempSync(join(root, 'g-'))
+  const sup = makeSup(cwd)
+  sup.personaWrite('第一版')
+  sup.personaWrite('第二版')
+  sup.personaWrite('第三版')     // 与上一行同在这一秒内
+  const backups = readdirSync(cwd).filter((n) => n.startsWith('AGENTS.backup-'))
+  check('G ★ 同一秒连续保存留下两份备份（不互相覆盖）', backups.length === 2, JSON.stringify(backups))
+  const contents = backups.map((n) => readFileSync(join(cwd, n), 'utf8')).sort()
+  check('G ★ 两份备份分别是上一版和上上版', contents.includes('第一版') && contents.includes('第二版'), JSON.stringify(contents))
+  check('G 正文件仍是最后一版', readFileSync(join(cwd, 'AGENTS.md'), 'utf8') === '第三版')
+
+  // 本地时间：备份名的时分秒应当贴近"现在"的本地钟，而不是 UTC（差 8 小时）。
+  const stamp = (backups[0].match(/AGENTS\.backup-(\d{8})-(\d{6})/) ?? [])
+  if (stamp.length === 3) {
+    const at = new Date(Number(stamp[1].slice(0, 4)), Number(stamp[1].slice(4, 6)) - 1, Number(stamp[1].slice(6, 8)),
+      Number(stamp[2].slice(0, 2)), Number(stamp[2].slice(2, 4)), Number(stamp[2].slice(4, 6)))
+    const driftMin = Math.abs(Date.now() - at.getTime()) / 60000
+    check('G ★ 备份名里的时间是本地时间（不是 UTC）', driftMin < 5, `drift=${driftMin.toFixed(1)}min name=${backups[0]}`)
+  } else {
+    check('G 备份名形如 AGENTS.backup-YYYYMMDD-HHMMSS.md', false, backups[0])
+  }
+}
+
+// ---------- H. 列备份 / 读备份正文（新增的两条只读接口） ----------
+{
+  const cwd = mkdtempSync(join(root, 'h-'))
+  const sup = makeSup(cwd)
+  sup.personaWrite('一')
+  sup.personaWrite('二')
+  sup.personaWrite('三')
+  // 旧版没有这两个接口：直接崩会把后面的 G/I 也带走，所以先判存在再往下测。
+  const hasApi = typeof sup.personaBackups === 'function' && typeof sup.personaBackupText === 'function'
+  check('H 有「列备份 / 读备份正文」两个只读接口', hasApi, typeof sup.personaBackups)
+  if (!hasApi) {
+    check('H 列出两份备份', false, '接口不存在')
+    check('H 新写的排在前面（按写入时间，不是字典序）', false, '接口不存在')
+    check('H 每行带字节数', false, '接口不存在')
+    check('H 读得回备份正文', false, '接口不存在')
+    check('H 读正文不会删掉备份', false, '接口不存在')
+    check('H 拒绝带路径的备份名（防穿越）', false, '接口不存在')
+    check('H 拒绝不存在的备份名', false, '接口不存在')
+  } else {
+  const rows = sup.personaBackups()
+  check('H 列出两份备份', rows.length === 2, JSON.stringify(rows.map((r) => r.name)))
+  // 排序按写入时间。同秒撞名时文件名是 …-212645.md / …-212645-2.md，纯字典序会把后写的排前面。
+  check('H 新写的排在前面（按写入时间，不是字典序）', rows[0].updatedAt >= rows[1].updatedAt, rows.map((r) => r.name + '@' + r.updatedAt).join(' > '))
+  check('H 每行带字节数', rows.every((r) => typeof r.bytes === 'number' && r.bytes > 0), JSON.stringify(rows[0]))
+  const text = sup.personaBackupText(rows[0].name)
+  check('H 读得回备份正文', text.ok === true && text.text === '二', JSON.stringify(text).slice(0, 80))
+  check('H 读正文不会删掉备份', sup.personaBackups().length === 2)
+  check('H 拒绝带路径的备份名（防穿越）', sup.personaBackupText('../AGENTS.md').ok === false)
+  check('H 拒绝不存在的备份名', sup.personaBackupText('AGENTS.backup-19990101-000000.md').ok === false)
+  }
+}
+
+// ---------- I. note 说的是宿主的真实预算，不是"要重开会话" ----------
+{
+  const cwd = mkdtempSync(join(root, 'i-'))
+  const sup = makeSup(cwd)
+  const ok = sup.personaWrite('短人设')
+  check('I 正常大小：note 说下一轮生效', /下一轮/.test(String(ok.note ?? '')), String(ok.note ?? ''))
+  check('I 正常大小：note 不再声称"要重开会话"', !/重开/.test(String(ok.note ?? '')), String(ok.note ?? ''))
+  // 宿主 agent-instructions 的 maxBytes=32768：超了会被截断，这才是真正要提醒的
+  const big = sup.personaWrite('啊'.repeat(18000))    // 54000 字节，未超 60KB 硬上限
+  check('I 超过 32 KiB 预算时保存成功但仍带警告', big.ok === true, JSON.stringify(big).slice(0, 80))
+  check('I ★ 超预算时 note 明说会被截断', /截断/.test(String(big.note ?? '')), String(big.note ?? ''))
+}
+
 console.log(`\n${passed} passed, ${failed} failed`)
 if (failed > 0) process.exitCode = 1
 try { rmSync(root, { recursive: true, force: true }) } catch {}

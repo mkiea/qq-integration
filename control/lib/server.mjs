@@ -175,6 +175,46 @@ export function createControlHandler({ config, token, api, ui = '', uiFile = '',
         json(response, 200, api.personaRead())
         return
       }
+      /**
+       * 人设的历史备份清单（2026-11-01 夜，用户问「替换有没有备份」）。
+       *
+       * 只读：列文件名/大小/时间，**不提供删除、也不提供"直接回滚"**——
+       * 回滚等于再写一次文件，得由用户在编辑框里看过再点保存，否则就成了
+       * "点一下就换掉一个人"的按钮。前端拿到的用法是：选中一份 → 填进编辑框 → 自己确认。
+       */
+      if (request.method === 'GET' && path === '/api/persona/backups') {
+        if (typeof api.personaBackups !== 'function') {
+          json(response, 200, { ok: false, reason: '当前控制台版本不支持列人设备份' })
+          return
+        }
+        const rows = api.personaBackups()
+        json(response, 200, { ok: true, rows })
+        return
+      }
+      /**
+       * 读回一份备份的正文。名字只接受 `AGENTS.backup-*.md`（防穿越由 basename 校验兜住），
+       * 拼接目录仍旧只在 `cwd` 下 —— 调用方没有"指定任意路径"的口子。
+       */
+      if (request.method === 'GET' && path === '/api/persona/backup') {
+        if (typeof api.personaBackups !== 'function') {
+          json(response, 200, { ok: false, reason: '当前控制台版本不支持读人设备份' })
+          return
+        }
+        const name = String(url.searchParams.get('name') ?? '')
+        if (!/^AGENTS\.backup-[^\\/]+\.md$/.test(name)) {
+          json(response, 400, { ok: false, reason: '备份名必须是 AGENTS.backup-*.md' })
+          return
+        }
+        const hit = api.personaBackups().find((row) => row.name === name)
+        if (!hit) {
+          json(response, 404, { ok: false, reason: `没有这份备份：${name}` })
+          return
+        }
+        json(response, 200, typeof api.personaBackupText === 'function'
+          ? api.personaBackupText(name)
+          : { ok: false, reason: '当前控制台版本不支持读备份正文' })
+        return
+      }
       if (request.method === 'GET' && path === '/api/logs') {
         const name = url.searchParams.get('name') ?? 'hostOut'
         if (!LOG_NAMES.includes(name)) {

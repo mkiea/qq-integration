@@ -337,9 +337,20 @@
         oninput="this.dataset.dirty='1'"
         style="width:100%;min-height:340px;font-family:ui-monospace,Consolas,monospace;font-size:13px;line-height:1.5;padding:10px;border-radius:6px;border:1px solid #ccc;resize:vertical"
         placeholder="（这个文件还不存在。写点东西，然后保存。）"></textarea>
+      <div class="row" style="margin-top:8px">
+        <select id="personaBackups" title="每次保存前自动留下的旧版（新的在最前）"
+          style="min-width:320px;font-family:ui-monospace,Consolas,monospace;font-size:12px"></select>
+        <button title="把选中的旧版填进上面的编辑框。不会自动保存 —— 你自己看过再点「保存」" onclick="loadPersonaBackup()">载入到编辑框</button>
+        <button title="重新扫描备份目录" onclick="loadPersonaBackups()">刷新备份列表</button>
+        <span class="meta" id="personaBackupState"></span>
+      </div>
       <div class="meta" style="margin-top:6px">
-        保存后 <b>不会立刻改变正在进行的对话</b>：DSH 在下一次创建会话时才读它。
-        想马上生效就重启宿主（或等这个会话自然结束）。
+        保存是<b>整文件替换</b>（不是追加）；替换前一定会把旧版复制成
+        <code>AGENTS.backup-时间.md</code> 放在同一目录，<b>不会自动清理</b>，也不会自动删。
+      </div>
+      <div class="meta" style="margin-top:4px">
+        生效时机：宿主每轮都会对账人设文件，改完<b>下一轮就带上</b>（不必重开会话）。
+        人设预算 <b>32 KiB</b>，超过会被截断 —— 超出时保存结果会给警告。
       </div>
     </section>
   </details>
@@ -1460,10 +1471,60 @@ async function savePersona() {
     if (r.ok !== true) { state.textContent = '⚠️ ' + (r.reason || '保存失败'); return; }
     el.dataset.dirty = '0';
     const backupName = r.backup ? String(r.backup).split(/[\\/]/).pop() : '';
-    state.textContent = '✅ 已保存 ' + r.bytes + ' 字节' + (backupName ? '（旧版备份：' + backupName + '）' : '');
+    state.textContent = '✅ 已保存 ' + r.bytes + ' 字节' + (backupName ? '（旧版备份：' + backupName + '）' : '')
+      + (r.note ? ' · ' + r.note : '');
     loadPersona(true);
+    loadPersonaBackups();
   } catch (error) {
     state.textContent = '⚠️ ' + error.message;
+  }
+}
+
+/**
+ * 人设备份列表（2026-11-01 夜，用户问「替换有没有备份」）。
+ *
+ * 只列、只读：这里没有“一键回滚”。回滚等于再写一次文件，得让用户在编辑框里
+ * 看过内容再自己点保存 —— "点一下就把这个人换掉"的按钮不该存在。
+ */
+async function loadPersonaBackups() {
+  const sel = document.getElementById('personaBackups');
+  const state = document.getElementById('personaBackupState');
+  if (!sel || !state) return;
+  state.textContent = '扫描中…';
+  try {
+    const r = await api('/api/persona/backups');
+    if (r.ok !== true) { state.textContent = '⚠️ ' + (r.reason || '列不出备份'); return; }
+    const rows = Array.isArray(r.rows) ? r.rows : [];
+    sel.innerHTML = rows.length === 0
+      ? '<option value="">（还没有备份 —— 第一次保存之后才会有）</option>'
+      : rows.map((row) => '<option value="' + escapeHtml(row.name) + '">'
+        + escapeHtml(row.name) + ' · ' + row.bytes + ' 字节 · '
+        + escapeHtml(new Date(row.updatedAt).toLocaleString('zh-CN', { hour12: false }))
+        + '</option>').join('');
+    state.textContent = rows.length === 0 ? '' : rows.length + ' 份备份';
+  } catch (error) {
+    state.textContent = '⚠️ ' + error.message;
+  }
+}
+
+async function loadPersonaBackup() {
+  const sel = document.getElementById('personaBackups');
+  const el = document.getElementById('personaText');
+  const state = document.getElementById('personaState');
+  const state2 = document.getElementById('personaBackupState');
+  if (!sel || !el) return;
+  const name = sel.value;
+  if (!name) { if (state2) state2.textContent = '先选一份备份'; return; }
+  if (el.dataset.dirty === '1' && !confirm('编辑框里有没保存的修改，载入旧版会覆盖它。继续？')) return;
+  try {
+    const r = await api('/api/persona/backup?name=' + encodeURIComponent(name));
+    if (r.ok !== true) { if (state) state.textContent = '⚠️ ' + (r.reason || '读不到这份备份'); return; }
+    el.value = r.text || '';
+    el.dataset.dirty = '1';   // 载入 ≠ 保存：标脏，避免下次自动刷新把它冲掉
+    if (state) state.textContent = '已载入 ' + name + '（' + r.bytes + ' 字节），确认后点「保存」才会生效';
+    if (state2) state2.textContent = '';
+  } catch (error) {
+    if (state) state.textContent = '⚠️ ' + error.message;
   }
 }
 
@@ -1735,6 +1796,7 @@ function loadDataGroup() {
   loadJobs();
   loadGroups();
   loadPersona();
+  loadPersonaBackups();
 }
 
 refresh();
@@ -1749,7 +1811,7 @@ if (groupOpen('gData')) loadDataGroup();
 const GROUP_ENTRY = {
   gData: loadDataGroup,
   // 不传 force：有未保存的改动时 loadPersona 自己会跳过，不会把用户打的字冲掉。
-  gPersona: () => loadPersona(),
+  gPersona: () => { loadPersona(); loadPersonaBackups(); },
   gDiag: () => { runDiagnose(); loadAcceptance(); },
   gLogin: () => loadQr(),
 };

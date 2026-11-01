@@ -2041,3 +2041,29 @@ E 后端抛错如实带回原文、**不留半份结果文件**。
 
 D 是这套里最重要的一条：一条能让管理员调任意 action 的指令，界面上看不出任何区别，
 一旦门禁写漏，任何白名单里的人都能借它越权。
+
+**㊿ 冷缓存回源：引用旧消息终于有路可走了（2026-11-01 夜）**
+
+`.probe __introspect` 拿到 `NodeIKernelMsgService` 的**299 个方法**（真表，不是猜的），
+里面有一批只读查询：`getMsgsByMsgId` / `getSingleMsg` / `getMsgsBySeqAndCount` /
+`getSourceOfReplyMsg` / `queryMsgsWithFilter` …
+
+于是两端各补一层：
+
+- **后端（本地 Waylay 副本）**：`get_msg` 缓存没命中、且请求带了 `_peer` 时，
+  调 `getMsgsByMsgId(peer, [真实 id])` 回源内核，用 `ntToOneBot` 转回消息段；
+  另加 `__msgcall` 探测口，之后验证签名不必再重启 QQ。
+- **桥**：`getMsg(socket, id, peer)` 把会话身份一起带上（`_peer = {chatType, peerUid}`）。
+  这是 OneBot v11 之外的附加字段，别的实现会忽略；**不带就不塞空 peer** ——
+  拿空 peer 去查比不查更糟（查错会话比查不到更难发现）。
+
+### 测试 `onebot-api-unit` 61 → 67 条
+
+新增三条：带 peer 时帧里有 `_peer`（群 chatType=2 / 私聊=1）｜**不带 peer 时帧里不许出现 `_peer`**
+｜19 位 id 必须按字符串发（`Number()` 会静默改低位，老坑）。
+
+### 生效条件
+
+后端补丁要**重启 QQ**；桥的改动要**重启宿主**。两个都做了才有效。
+验证方式：引用一条**QQ 重启之前**的消息（这次不会因为是旧消息就失败）；
+`qq-bridge-debug.log` 应出现 `quote resolve: … got=msg`，Waylay 日志出现 `[get_msg] kernel hit`。

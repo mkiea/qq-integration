@@ -221,6 +221,34 @@ check('收到入群请求事件', events.request.length === 1 && events.request[
     stripMentionName('@别人 /打卡名册', '小鲸鱼') === '@别人 /打卡名册')
 }
 
+/**
+ * `get_msg` 的两个额外约定（2026-11-01 夜）。
+ *
+ * A 带上 peer 时，帧里必须出现 `_peer` —— 冷缓存的后端（Waylay）要靠它才能回源内核；
+ *   不带就等于放弃这条路（真机：QQ 一重启，引用旧消息全是空）。
+ * B 不带 peer 时**不许**塞一个空的 `_peer` —— 那会让后端以为"有会话身份"去查一个空 peer，
+ *   比不查更糟（查错会话比查不到更难发现）。
+ * C 19 位 id 必须按**字符串**发（`Number()` 会静默改低位，这是老坑）。
+ */
+{
+  const before = frames.length
+  const peer = { messageType: 'group', targetId: 2002 }
+  const answer = await server.getMsg(socket, '7703053729802896443', peer)
+  const frame = frames.at(-1)
+  check('C get_msg 帧里 id 是字符串', typeof frame?.params?.message_id === 'string', JSON.stringify(frame?.params))
+  check('A 带 peer 时帧里出现 _peer（chatType=2 群）',
+    frame?.params?._peer?.chatType === 2 && frame?.params?._peer?.peerUid === '2002', JSON.stringify(frame?.params?._peer))
+  check('A 返回值仍是后端给的 data', answer?.message_id === 4242, JSON.stringify(answer))
+
+  await server.getMsg(socket, '7703053729802896443', { messageType: 'private', targetId: 1001 })
+  check('A 私聊 peer 用 chatType=1', frames.at(-1)?.params?._peer?.chatType === 1, JSON.stringify(frames.at(-1)?.params?._peer))
+
+  await server.getMsg(socket, '7703053729802896443')
+  check('B ★ 不带 peer 时帧里没有 _peer', !Object.prototype.hasOwnProperty.call(frames.at(-1)?.params ?? {}, '_peer'),
+    JSON.stringify(frames.at(-1)?.params))
+  check('B 没有多发出一帧（总共 3 次调用）', frames.length === before + 3, `${frames.length - before}`)
+}
+
 client.close()
 await server.stop()
 console.log(`\n${passed} passed, ${failed} failed`)

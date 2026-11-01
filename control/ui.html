@@ -1579,9 +1579,9 @@ function renderPersonaCheck(analysis) {
   const kb = (n) => (n / 1024).toFixed(1) + ' KiB';
   parts.push('预算 ' + kb(analysis.bytes) + ' / ' + kb(analysis.budgetBytes)
     + '（' + Math.round((analysis.ratio || 0) * 100) + '%）');
-  const present = (analysis.sections || []).filter((s) => s.present).length;
-  parts.push('标准小节 ' + present + '/' + (analysis.sections || []).length);
-  const missingReq = (analysis.sections || []).filter((s) => s.required && !s.present);
+  const present = (analysis.blocks || []).filter((s) => s.present).length;
+  parts.push('标准块 ' + present + '/' + (analysis.blocks || []).length);
+  const missingReq = (analysis.blocks || []).filter((s) => s.required && !s.present);
   if (missingReq.length > 0) parts.push('缺必填：' + missingReq.map((s) => s.title).join('、'));
   box.textContent = parts.join(' · ');
   const findings = Array.isArray(analysis.findings) ? analysis.findings : [];

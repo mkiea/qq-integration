@@ -1,17 +1,18 @@
 /**
- * 人设的「标准格式」：结构、预算、校验（2026-11-01 夜，用户要「给人设弄个标准格式」）。
+ * 人设「标准格式」：五块结构 / 预算 / 校验（2026-11-01，当晚从 10 节简化到 5 块）。
  *
  * 判据不能只是"模板能生成"，那谁都能过。这里钉的是**这份格式自己站不站得住**：
  *
- *   A 骨架本身逐条通过自己的校验（只允许"占位符没填"这一条已知提示）
- *   B 骨架的字节数离预算还有很大余量（一上手就顶到截断线，等于格式设计失败）
- *   C 骨架的小节顺序 = 截断优先级：身份在语气之前（含**反例**：把语气提前必须报 `order`）
- *   D 校验能分辨"缺"与"有"：残缺文本报出准确的缺项，完整文本不误报
- *   E 认节不靠逐字照抄标题（作者用同义标题也算）
- *   F 对照表没起标题也算写了（`evidence`）—— 误报"没写"最容易让人不信这份检查
- *   G 预算与占位符两条提示的方向是对的：不超不报、超了必报
+ *   A 骨架逐条通过自己的校验（只允许"占位符没填"这一条已知提示）
+ *   B 骨架远离预算（一上手就顶到截断线 = 格式设计失败）
+ *   C 顺序 = 截断优先级：身份在最前（含**反例**：把语气提前必须报 order）
+ *   D 缺 / 不缺分得开
+ *   E 认块不靠 `#`、也不靠逐字照抄标题（从网页粘进来 `#` 会整片丢 —— 真机踩过）
+ *   F 红线超过 5 条要报（含边界：5 条不报、6 条报）
+ *   G 负面清单：红线之外"不要/别"太多要报，且不算中文歧义字（特别/区别/性别…）
+ *   H 预算三条提示方向正确（不许把字节当字符算）
  */
-import { PERSONA_BUDGET_BYTES, PERSONA_SECTIONS, PERSONA_TEMPLATE, analyzePersona } from '../lib/persona-spec.js'
+import { PERSONA_BLOCKS, PERSONA_BUDGET_BYTES, PERSONA_TEMPLATE, analyzePersona, countNegative } from '../lib/persona-spec.js'
 
 let passed = 0
 let failed = 0
@@ -20,7 +21,7 @@ function check(name, ok, extra = '') {
   else { failed++; console.log('FAIL', name, extra) }
 }
 
-const REQUIRED = PERSONA_SECTIONS.filter((s) => s.required).map((s) => s.id)
+const REQUIRED = PERSONA_BLOCKS.filter((b) => b.required).map((b) => b.id)
 
 // ---------- A. 骨架自己必须过自己的校验 ----------
 {
@@ -31,34 +32,32 @@ const REQUIRED = PERSONA_SECTIONS.filter((s) => s.required).map((s) => s.id)
   check('A 骨架没有任何 error 级问题', errors.length === 0, JSON.stringify(errors.map((f) => f.code)))
   const codes = a.findings.map((f) => f.code)
   check('A 骨架唯一的问题就是"占位符还没填"', codes.length === 1 && codes[0] === 'placeholder-left', JSON.stringify(codes))
-  check('A 骨架每一节都被认出来了', a.sections.every((s) => s.present), JSON.stringify(a.sections.filter((s) => !s.present).map((s) => s.id)))
+  check('A 骨架每一块都被认出来了', a.blocks.every((b) => b.present), JSON.stringify(a.blocks.filter((b) => !b.present).map((b) => b.id)))
+  check('A 骨架没触发"红线太多"', !codes.includes('too-many-rules'), JSON.stringify(codes))
+  check('A 骨架没触发"负面清单过密"', !codes.includes('negative-heavy'), JSON.stringify(codes))
 }
 
 // ---------- B. 骨架要留足余量 ----------
 {
   const bytes = Buffer.byteLength(PERSONA_TEMPLATE, 'utf8')
-  check('B 骨架小于预算的 25%（写作时还有得写）', bytes < PERSONA_BUDGET_BYTES * 0.25, `${bytes} / ${PERSONA_BUDGET_BYTES}`)
-  // 目标字节合计也要能装进预算，否则"照着目标写"最后一定被截断
-  const targetSum = PERSONA_SECTIONS.reduce((sum, s) => sum + s.targetBytes, 0)
-  check('B 按各节目标字节写满，仍然装得下预算', targetSum < PERSONA_BUDGET_BYTES, `${targetSum} / ${PERSONA_BUDGET_BYTES}`)
-  check('B 必填小节的目标字节合计不超过预算的一半', PERSONA_SECTIONS.filter((s) => s.required)
-    .reduce((sum, s) => sum + s.targetBytes, 0) < PERSONA_BUDGET_BYTES * 0.5)
+  check('B 骨架小于预算的 10%（写起来不用先删模板）', bytes < PERSONA_BUDGET_BYTES * 0.1, `${bytes} / ${PERSONA_BUDGET_BYTES}`)
+  const targetSum = PERSONA_BLOCKS.reduce((sum, b) => sum + b.targetBytes, 0)
+  check('B 按各块目标字节写满，仍装得下预算', targetSum < PERSONA_BUDGET_BYTES, `${targetSum} / ${PERSONA_BUDGET_BYTES}`)
+  check('B 必填三块的目标字节合计不超过预算的一半', PERSONA_BLOCKS.filter((b) => b.required)
+    .reduce((sum, b) => sum + b.targetBytes, 0) < PERSONA_BUDGET_BYTES * 0.5)
+  check('B 只有三块必填（最简能写完）', REQUIRED.length === 3, JSON.stringify(REQUIRED))
 }
 
 // ---------- C. 顺序 = 截断优先级 ----------
 {
-  const ids = PERSONA_SECTIONS.map((s) => s.id)
-  check('C 第一节必须是身份（截断从头砍）', ids[0] === 'identity', ids.join(','))
-  check('C 「怎么说话」排在「她是谁」之后', ids.indexOf('voice') > ids.indexOf('identity'))
-  check('C 必填的五节都在前六位', REQUIRED.every((id) => ids.indexOf(id) < 6), JSON.stringify(REQUIRED.map((id) => ids.indexOf(id))))
+  const ids = PERSONA_BLOCKS.map((b) => b.id)
+  check('C 第一块必须是身份（截断从头砍）', ids[0] === 'who', ids.join(','))
+  check('C 「怎么说」排在「她是谁」之后', ids.indexOf('voice') > ids.indexOf('who'))
 
-  // 反例：把语气写到最前面，必须报 order
   const swapped = analyzePersona([
-    '## 怎么说话', '一条只发一句。', '',
+    '## 怎么说', '一条只发一句。', '',
     '## 她是谁', '她是人，猫只是特征。', '',
-    '## 对面是谁', '一个网友。', '',
-    '## 只发台词', '没有草稿。', '',
-    '## 边界与红线', '不自称 AI。',
+    '## 红线', '不自称 AI。',
   ].join('\n'))
   check('C ★ 反例：语气排在身份前面会被点名', swapped.findings.some((f) => f.code === 'order'),
     JSON.stringify(swapped.findings.map((f) => f.code)))
@@ -66,72 +65,95 @@ const REQUIRED = PERSONA_SECTIONS.filter((s) => s.required).map((s) => s.id)
 
 // ---------- D. 缺 / 不缺，必须分得开 ----------
 {
-  const full = analyzePersona(PERSONA_TEMPLATE)
-  check('D 完整骨架不报 missing', full.missing.length === 0, JSON.stringify(full.missing))
-
-  // 只留"怎么说话"：五个必填里应当报出四个
-  const partial = analyzePersona('## 怎么说话\n\n一条只发一句。\n')
-  check('D 残缺文本报出缺项', partial.missing.length === 5 - 1, JSON.stringify(partial.missing))
+  const partial = analyzePersona('## 怎么说\n\n一条只发一句。\n')
+  check('D 残缺文本报出缺项', partial.missing.length === 2, JSON.stringify(partial.missing))
+  check('D 残缺文本里没有"怎么说"（它在）', !partial.missing.includes('voice'), JSON.stringify(partial.missing))
   check('D 残缺文本 ok=false', partial.ok === false)
-  check('D 报出来的缺项里没有"怎么说话"（它在）', !partial.missing.includes('voice'), JSON.stringify(partial.missing))
 
   const empty = analyzePersona('')
   check('D 空文本单独报 empty', empty.findings.some((f) => f.code === 'empty'), JSON.stringify(empty.findings.map((f) => f.code)))
-  check('D 空文本 ok=false', empty.ok === false)
-
-  const blank = analyzePersona('   \n\n  ')
-  check('D 只有空白也等于空', blank.findings.some((f) => f.code === 'empty'))
+  check('D 只有空白也等于空', analyzePersona('   \n\n  ').findings.some((f) => f.code === 'empty'))
 }
 
-// ---------- E. 认节不靠逐字照抄 ----------
+// ---------- E. 认块：不许只认 `#`，也不许要求照抄标题 ----------
 {
+  // 真机现场：从网页复制过来，`##` 整片丢了，只剩 "1. 她是谁（身份脊柱）"
+  const pasted = analyzePersona([
+    'QQ 聊天人格：某某',
+    '你在这台机器上只做一件事。',
+    '',
+    '1. 她是谁（身份脊柱）',
+    '她是人，猫只是特征。',
+    '',
+    '2. 对面是谁',
+    '一个网友。',
+    '',
+    '3. 怎么说话',
+    '一条只发一句。',
+    '',
+    '5. 边界与红线',
+    '不自称 AI。',
+  ].join('\n'))
+  // 这份样本里「对面是谁」按设计并进 who（她是谁那块要带一句'对面是谁'），所以能认出的**不同块**是 3 个。
+  check('E ★ `#` 被吃掉时仍然认得出块', pasted.blocks.filter((b) => b.present).length === 3,
+    JSON.stringify(pasted.blocks.map((b) => `${b.id}:${b.present}`)))
+  check('E ★ 这种情况不该报"缺必填"', pasted.missing.length === 0, JSON.stringify(pasted.missing))
+
   const renamed = analyzePersona([
     '## 她到底是个什么玩意儿', '她是人。', '',
-    '## 对面坐的是谁', '一个网友。', '',
+    '## 说话规矩', '一句一条。', '',
+    '## 底线', '不自称 AI。',
   ].join('\n'))
-  check('E 同义标题也认得出身份', renamed.sections.find((s) => s.id === 'identity')?.present === true,
-    JSON.stringify(renamed.sections.map((s) => `${s.id}:${s.present}`)))
-  check('E 同义标题也认得出关系', renamed.sections.find((s) => s.id === 'relation')?.present === true)
+  check('E 同义标题也认得出身份', renamed.blocks.find((b) => b.id === 'who')?.present === true)
+  check('E 同义标题也认得出红线', renamed.blocks.find((b) => b.id === 'rules')?.present === true)
 }
 
-// ---------- F. 对照表没起标题也算写了 ----------
+// ---------- F. 红线不超过 5 条 ----------
 {
-  const withTable = analyzePersona([
-    '## 怎么说话', '',
-    '| 别这么说 | 这么说 |', '| --- | --- |', '| 我在家里等你回来呢 | 等你呢 |',
-  ].join('\n'))
-  const example = withTable.sections.find((s) => s.id === 'example')
-  check('F 贴在别的小节下面的对照表也算「示范对照」', example?.present === true, JSON.stringify(example))
-  check('F 走的是 evidence 而不是标题', example?.via === 'evidence', String(example?.via))
-
-  const withoutTable = analyzePersona('## 怎么说话\n\n一条一句。\n')
-  check('F 反向对照：没有表格就不该报有', withoutTable.sections.find((s) => s.id === 'example')?.present === false)
+  const make = (n) => '## 红线\n\n' + Array.from({ length: n }, (_, i) => `- 第 ${i + 1} 条禁令`).join('\n') + '\n'
+  check('F 5 条不报（边界）', !analyzePersona(make(5)).findings.some((f) => f.code === 'too-many-rules'))
+  check('F ★ 6 条要报', analyzePersona(make(6)).findings.some((f) => f.code === 'too-many-rules'))
+  check('F 报的是 warn 不是 error', analyzePersona(make(9)).findings.find((f) => f.code === 'too-many-rules')?.level === 'warn')
+  check('F 条数写进了提示里', /9 条/.test(String(analyzePersona(make(9)).findings.find((f) => f.code === 'too-many-rules')?.message ?? '')))
 }
 
-// ---------- G. 预算与占位符两条提示 ----------
+// ---------- G. 负面清单密度 + 中文歧义字 ----------
+{
+  check('G countNegative 不把「特别」当否定', countNegative('特别好的区别') === 0, String(countNegative('特别好的区别')))
+  check('G countNegative 数得出「不要/别」', countNegative('不要这样，别那样') === 2, String(countNegative('不要这样，别那样')))
+  check('G countNegative 放过「性别/类别/个别」', countNegative('性别、类别、个别情况') === 0, String(countNegative('性别、类别、个别情况')))
+
+  const heavy = '## 怎么说\n\n' + '不要这样。别那样。不许再问。不准敷衍。不能解释。\n'
+  check('G ★ 红线之外"不要/别"过多要报', analyzePersona(heavy).findings.some((f) => f.code === 'negative-heavy'),
+    JSON.stringify(analyzePersona(heavy).findings.map((f) => f.code)))
+
+  const fine = '## 怎么说\n\n一句一条。\n不要超过两句。\n'
+  check('G 反向对照：少量否定不报', !analyzePersona(fine).findings.some((f) => f.code === 'negative-heavy'))
+
+  const rulesHeavy = '## 红线\n\n不要编造。别翻别处。不许假装。不准跑题。不能说谎。别装。\n'
+  check('G 红线里全是禁令也不报（那本来就是禁令区）',
+    !analyzePersona(rulesHeavy).findings.some((f) => f.code === 'negative-heavy'))
+}
+
+// ---------- H. 预算三条提示 ----------
 {
   const small = analyzePersona('## 她是谁\n\n她是人。\n')
-  check('G 小文件不报预算问题', !small.findings.some((f) => /budget/.test(f.code)), JSON.stringify(small.findings.map((f) => f.code)))
+  check('H 小文件不报预算问题', !small.findings.some((f) => /budget/.test(f.code)), JSON.stringify(small.findings.map((f) => f.code)))
 
-  const big = analyzePersona('## 她是谁\n\n' + '她'.repeat(PERSONA_BUDGET_BYTES))
-  check('G ★ 超预算必报 over-budget', big.findings.some((f) => f.code === 'over-budget'), JSON.stringify(big.findings.map((f) => f.code)))
-  check('G over-budget 是 error 级', big.findings.find((f) => f.code === 'over-budget')?.level === 'error')
-  check('G 超预算时 truncated=true', big.truncated === true)
+  const big = analyzePersona('## 她是谁\n\n' + '她'.repeat(Math.floor(PERSONA_BUDGET_BYTES / 3) + 10))
+  check('H ★ 超预算必报 over-budget', big.findings.some((f) => f.code === 'over-budget'), JSON.stringify(big.findings.map((f) => f.code)))
+  check('H over-budget 是 error 级', big.findings.find((f) => f.code === 'over-budget')?.level === 'error')
+  check('H 超预算时 truncated=true', big.truncated === true)
 
-  // 注意单位：budget 是**字节**，一个汉字 3 字节。第一版按字符数算，直接冲到 over-budget，
-  // 于是 near-budget 永远测不到（这是典型的把量纲搞混）。
+  // 单位：budget 是**字节**，一个汉字 3 字节。上一版按字符算，直接冲到 over-budget，
+  // 于是 near-budget 永远测不到（量纲错在测试里也一样致命）。
   const near = analyzePersona('## 她是谁\n\n' + '她'.repeat(Math.floor(PERSONA_BUDGET_BYTES * 0.8 / 3)))
-  check('G 75% 以上报 near-budget', near.findings.some((f) => f.code === 'near-budget'), JSON.stringify(near.findings.map((f) => f.code)))
+  check('H 75% 以上报 near-budget', near.findings.some((f) => f.code === 'near-budget'), JSON.stringify(near.findings.map((f) => f.code)))
 
-  const left = analyzePersona('## 她是谁\n\n（这里写：她从哪来。）\n')
-  check('G ★ 没填的占位符会被数出来', left.findings.some((f) => f.code === 'placeholder-left'), JSON.stringify(left.findings.map((f) => f.code)))
-  check('G 占位符提示里带处数', /1 处/.test(String(left.findings.find((f) => f.code === 'placeholder-left')?.message ?? '')),
+  const left = analyzePersona('## 她是谁\n\n（这里写：她从哪来。）\n（这里写：她怕什么。）\n')
+  check('H ★ 没填的占位符会被数出来', /2 处/.test(String(left.findings.find((f) => f.code === 'placeholder-left')?.message ?? '')),
     String(left.findings.find((f) => f.code === 'placeholder-left')?.message ?? ''))
-
-  // 正文里正常的括号说明不该被当成占位符（误报会让作者不再信这份检查）
-  const normal = analyzePersona('## 她是谁\n\n她是人（不是助手），猫只是特征。\n')
-  check('G 反向对照：普通括号说明不报占位符', !normal.findings.some((f) => f.code === 'placeholder-left'),
-    JSON.stringify(normal.findings.map((f) => f.code)))
+  check('H 普通括号说明不误报', !analyzePersona('## 她是谁\n\n她是人（不是助手）。\n').findings.some((f) => f.code === 'placeholder-left'))
 }
 
 console.log(`\n${passed} passed, ${failed} failed`)

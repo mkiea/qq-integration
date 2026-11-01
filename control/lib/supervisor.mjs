@@ -22,7 +22,7 @@ import { normalizeDataDir, upsertPatchValue } from '../../lib/panel.js'
 import { pickFolderDialog } from '../../lib/dir-pick.js'
 // 人设标准格式：结构/预算/校验。住在 `lib/` 是因为它描述的是**宿主怎么读这个文件**，
 // 不是控制台的界面逻辑（宿主侧的预算、截断顺序都在那份定义里）。
-import { PERSONA_BUDGET_BYTES, PERSONA_SECTIONS, PERSONA_TEMPLATE, analyzePersona } from '../../lib/persona-spec.js'
+import { PERSONA_BLOCKS, PERSONA_BUDGET_BYTES, PERSONA_TEMPLATE, analyzePersona } from '../../lib/persona-spec.js'
 import { createTraceTailer, filterEvents, formatChain, groupChains, readRuntime, readTraceFile, summarizeEvents } from './trace.mjs'
 import { formatDiagnose, runDiagnose } from './diagnose.mjs'
 import { buildZip, fileEntry } from './zip.mjs'
@@ -1369,7 +1369,7 @@ export function createSupervisor(config, deps = {}) {
     if (full === '') return { ok: false, reason: '人设名不合法（不能为空、不能带 / \\ : * ? " < > |，不能以点开头，不能含 ..）' }
     const body = String(text ?? '')
     if (body.trim() === '') return { ok: false, reason: '内容是空的，不存' }
-    if (body.length > 60 * 1024) return { ok: false, reason: '人设超过 60 KB，控制台不接这么大的文件' }
+    if (Buffer.byteLength(body, 'utf8') > 60 * 1024) return { ok: false, reason: '人设超过 60 KB，控制台不接这么大的文件' }
     if (existsSync(full) && overwrite !== true) {
       return { ok: false, reason: `已经有一份叫「${validPersonaName(name)}」的人设了。勾上"覆盖同名"再存，或者换个名字。` }
     }
@@ -1443,13 +1443,13 @@ export function createSupervisor(config, deps = {}) {
     }
   }
 
-  /** 标准骨架 + 每节的"要回答什么/别写什么"。面板拿它做提示，不落盘。 */
+  /** 标准骨架 + 每块的"要回答什么/别写什么"。面板拿它做提示，不落盘。 */
   function personaTemplate() {
     return {
       ok: true,
       template: PERSONA_TEMPLATE,
       budgetBytes: PERSONA_BUDGET_BYTES,
-      sections: PERSONA_SECTIONS.map(({ id, title, required, targetBytes, ask, avoid }) => ({ id, title, required, targetBytes, ask, avoid })),
+      blocks: PERSONA_BLOCKS.map(({ id, title, required, targetBytes, ask, avoid }) => ({ id, title, required, targetBytes, ask, avoid })),
     }
   }
 
@@ -1514,8 +1514,11 @@ export function createSupervisor(config, deps = {}) {
     const body = String(text ?? '')
     // 上限要对齐控制台的 MAX_BODY_BYTES（64 KiB）：写成更大的值只会让用户在
     // 「保存」时收到一个 413，而不是在这里就被告知"太大了"。
-    const max = 60 * 1024
-    if (body.length > max) return { ok: false, reason: `人设超过 ${Math.round(max / 1024)} KB，控制台不接这么大的文件` }
+    // ⚠️ 用**字节**不是字符数：`body.length` 对中文只有实际字节的 1/3，
+    // 按字符判会让 180 KB 的中文混过去，最后由 HTTP 层吐一个 413。
+    const maxBytes = 60 * 1024
+    const size = Buffer.byteLength(body, 'utf8')
+    if (size > maxBytes) return { ok: false, reason: `人设 ${Math.round(size / 1024)} KB，超过控制台 ${Math.round(maxBytes / 1024)} KB 的上限` }
     let backup = ''
     try {
       if (existsSync(file)) {
@@ -1537,7 +1540,9 @@ export function createSupervisor(config, deps = {}) {
      *   - 有 32 KiB 预算，**超过会截断/省略**（还会在提示里写一行 budget 说明）。
      * 所以"要重开会话才生效"是错的（那是没核实前的推测），真正需要提醒的是预算。
      */
-    const budget = 32 * 1024
+    // 预算从 persona-spec 里取，别在这里再写一遍 32 —— 两处常数一旦漂移，
+    // 「保存时说没超、读取时说超了」这种自相矛盾就会出现。
+    const budget = PERSONA_BUDGET_BYTES
     const bytes = Buffer.byteLength(body, 'utf8')
     const note = bytes > budget
       ? `已保存 ${bytes} 字节，但宿主的人设预算只有 ${Math.round(budget / 1024)} KiB —— 超出的部分会被截断，她只能看到前半段。建议拆成多个文件或精简。`

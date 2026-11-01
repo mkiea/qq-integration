@@ -58,6 +58,11 @@
     font-size:12px; border:1px solid var(--line); background:var(--panel); color:var(--dim); white-space:nowrap; }
   .pill::before { content:""; width:7px; height:7px; border-radius:50%; background:currentColor; opacity:.55; }
   .pill.on { color:var(--ok); border-color:color-mix(in srgb, var(--ok) 35%, var(--line)); }
+  /* 「进程比代码旧」提示条：必须显眼但别挡住操作区，放在侧栏顶部 */
+  .stale-bar { margin:8px 0 4px; padding:8px 10px; border-radius:8px; font-size:12px; line-height:1.6;
+    color:var(--warn); border:1px solid color-mix(in srgb, var(--warn) 45%, var(--line));
+    background:color-mix(in srgb, var(--warn) 10%, var(--panel)); }
+  .stale-bar code { font-size:11px; }
   .pill.off { color:var(--bad); border-color:color-mix(in srgb, var(--bad) 35%, var(--line)); }
   .pill.warn { color:var(--warn); border-color:color-mix(in srgb, var(--warn) 40%, var(--line)); cursor:pointer; }
 
@@ -165,6 +170,12 @@
     <span class="logo">🐧</span>
     <div><b>QQ 集成接入 · 控制台</b><span class="meta">独立进程 · 127.0.0.1:8880</span></div>
   </div>
+  <!--
+    「进程比代码旧」的提示条（2026-11-01 夜）。默认隐藏，/api/status 的 build.stale 为真时才出现。
+    这个坑一晚咬了两次：页面读盘所以新按钮在，路由在内存所以点了回"未知接口"，
+    更糟的是新 UI 按新结构去读旧服务端的数据，显示成"标准块 0/5 / 缺五个必填块"——看着像功能坏了。
+  -->
+  <div id="staleBar" class="stale-bar" style="display:none"></div>
   <div class="pills">
     <span id="botPill" class="pill">机器人：未知</span>
     <span id="hostPill" class="pill">宿主：未知</span>
@@ -1128,6 +1139,7 @@ async function refresh() {
     const status = await api('/api/status');
     render(status);
     renderCtl(status);
+    renderStale(status.build);
     lastRuntime = status.runtime ?? null;
     renderRuntime(status.runtime ?? null, status);
     renderInboxMeta();
@@ -1135,6 +1147,26 @@ async function refresh() {
   } catch (e) {
     setConnOk(false, e.message);
   }
+}
+
+/**
+ * 「进程比代码旧」的提示（2026-11-01 夜）。
+ *
+ * 判据来自服务端（`/api/status` 的 `build.stale`：源文件 mtime 有没有超过进程启动时间）。
+ * 这里只负责说清楚 —— **不自动重启**：控制台能启停宿主进程，自己悄悄重启自己风险太大。
+ * 老版本服务端没有 build 字段，这时整条提示不出现（不误报）。
+ */
+function renderStale(build) {
+  const bar = document.getElementById('staleBar');
+  if (!bar) return;
+  if (!build || build.stale !== true) { bar.style.display = 'none'; return; }
+  const name = String(build.newestFile || '').split(/[\\/]/).pop();
+  const at = build.newestAt ? new Date(build.newestAt).toLocaleTimeString('zh-CN', { hour12: false }) : '';
+  bar.style.display = '';
+  bar.innerHTML = '⚠️ <b>控制台进程比代码旧</b>（' + build.newerCount + ' 个文件比进程新，最新是 <code>'
+    + escapeHtml(name) + ' ' + escapeHtml(at) + '</code>）。<br>'
+    + '这时页面上的新按钮点了会回「未知接口」，新字段也可能读出空值 —— 都是进程没重载，不是功能坏了。<br>'
+    + '重启即可：关掉控制台窗口，双击 <code>control\\启动控制台.bat</code>。';
 }
 // 总控页的状态行：复用 /api/status 里的端口快照，一行看全谁在跑
 function renderCtl(status) {

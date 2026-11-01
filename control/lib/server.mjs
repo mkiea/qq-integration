@@ -14,7 +14,9 @@
 import { createServer } from 'node:http'
 import { readFileSync, statSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
+import { fileURLToPath } from 'node:url'
 import { tailLines } from './supervisor.mjs'
+import { detectStale } from './staleness.mjs'
 import { FREEABLE_PORTS } from './config.mjs'
 import { buildScenario, listScenarios } from './scenarios.mjs'
 import { diffReplays } from './replaydiff.mjs'
@@ -90,6 +92,23 @@ export function originAllowed(origin, port) {
  */
 export function createControlHandler({ config, token, api, ui = '', uiFile = '', saveConfig = null, logger = console }) {
   const port = config.ports?.control ?? 8799
+  /**
+   * 「进程比代码旧」的检测（2026-11-01 夜，一晚被咬两次）。
+   *
+   * `ui.html` 每请求读盘（所以新按钮会出现），而这些模块是启动时加载进内存的
+   * （所以新接口不认、新字段不存在）。判据就是"源文件的 mtime 有没有超过进程启动时间"。
+   * 只报、不自动重启 —— 控制台是能启停宿主的进程，自己悄悄重启自己太危险。
+   */
+  const startedAt = Date.now()
+  const watchedFiles = [
+    uiFile,
+    fileURLToPath(new URL('./server.mjs', import.meta.url)),
+    fileURLToPath(new URL('./supervisor.mjs', import.meta.url)),
+    fileURLToPath(new URL('./staleness.mjs', import.meta.url)),
+    fileURLToPath(new URL('../../lib/persona-spec.js', import.meta.url)),
+    fileURLToPath(new URL('../../lib/panel.js', import.meta.url)),
+  ].filter((file) => file !== '')
+  const build = () => detectStale({ files: watchedFiles, startedAt, stat: statSync })
 
   /**
    * 界面 HTML 的热重载。
@@ -158,7 +177,7 @@ export function createControlHandler({ config, token, api, ui = '', uiFile = '',
 
     try {
       if (request.method === 'GET' && path === '/api/status') {
-        json(response, 200, { ok: true, ...(await api.status()) })
+        json(response, 200, { ok: true, ...(await api.status()), build: build() })
         return
       }
       /**

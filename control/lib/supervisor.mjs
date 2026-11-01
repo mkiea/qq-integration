@@ -8,6 +8,7 @@
  */
 import { execFile, spawn } from 'node:child_process'
 import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
+import { createHash } from 'node:crypto'
 import { request as httpRequest } from 'node:http'
 import { basename, dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -1277,6 +1278,153 @@ export function createSupervisor(config, deps = {}) {
     return cwd ? join(cwd, 'AGENTS.md') : ''
   }
 
+  /**
+   * 「人设库」：`cwd/personas/*.md`，每次一份完整的、可切换的人设（2026-11-01 夜）。
+   *
+   * 为什么要一个目录而不是"多份 AGENTS.md"：宿主只认 `cwd/AGENTS.md` 这一个文件名
+   * （`dsh-agent-instructions` 的候选名固定），所以**只有它生效**。
+   * 于是模型是：`personas/` 放所有备选，切换 = 把选中的那份复制成 `AGENTS.md`，
+   * 旧 `AGENTS.md` 照例先备份。这样"谁是当前人设"永远只有一个答案，不会出现
+   * 两份文件都觉得自己生效。
+   */
+  function personaDir() {
+    const file = personaFile()
+    return file ? join(dirname(file), 'personas') : ''
+  }
+
+  /**
+   * 人设名只许"像文件名"：不允许斜杠、不允许以点开头、不允许 `..`。
+   *
+   * 这条是**安全边界**，不是洁癖：名字会拼成路径，`../../AGENTS.md` 这种写法
+   * 等于给控制台开一个任意文件写入的口子（人设面板的注释里写过同一条理由）。
+   */
+  function validPersonaName(name) {
+    const value = String(name ?? '').trim()
+    if (value === '' || value.length > 40) return ''
+    if (value.startsWith('.')) return ''
+    if (/[\\/:*?"<>|]/.test(value)) return ''
+    if (value.includes('..')) return ''
+    return value
+  }
+
+  function personaPathOf(name) {
+    const dir = personaDir()
+    const safe = validPersonaName(name)
+    if (!dir || safe === '') return ''
+    return join(dir, `${safe}.md`)
+  }
+
+  /** 两个字符串内容是否相同（用哈希比，别拿整段文本比——人设是几 KB 的长文）。 */
+  function sameText(a, b) {
+    return createHash('sha1').update(String(a ?? ''), 'utf8').digest('hex')
+      === createHash('sha1').update(String(b ?? ''), 'utf8').digest('hex')
+  }
+
+  /**
+   * 列出所有人设 + 当前生效的那份。
+   *
+   * 「哪份在生效」用**内容比对**判定，不看文件名也不看时间戳：
+   * 用户完全可能手改 `AGENTS.md` 而没动 `personas/`，那时"上次切换的是哪份"就是历史，
+   * 只有"内容相同"才是事实。比对不上就如实说"当前是散装内容，不属于任何一份"。
+   */
+  function personaList() {
+    const file = personaFile()
+    const dir = personaDir()
+    if (!file) return { ok: false, reason: '还没配置数据目录（cwd），不知道人设放哪' }
+    let activeText = ''
+    let activeInfo = null
+    try {
+      if (existsSync(file)) {
+        activeText = readFileSync(file, 'utf8')
+        const st = statSync(file)
+        activeInfo = { file, bytes: st.size, updatedAt: st.mtimeMs }
+      }
+    } catch { activeInfo = null }
+    const rows = []
+    if (dir && existsSync(dir)) {
+      let names = []
+      try { names = readdirSync(dir).filter((name) => name.endsWith('.md')) } catch { names = [] }
+      for (const entry of names) {
+        const full = join(dir, entry)
+        try {
+          const text = readFileSync(full, 'utf8')
+          const st = statSync(full)
+          rows.push({
+            name: entry.replace(/\.md$/, ''),
+            file: full,
+            bytes: st.size,
+            updatedAt: st.mtimeMs,
+            active: activeInfo !== null && sameText(text, activeText),
+          })
+        } catch { /* 读不了的单项跳过，不让整个列表失败 */ }
+      }
+    }
+    rows.sort((a, b) => (Number(b.active) - Number(a.active)) || a.name.localeCompare(b.name, 'zh'))
+    return { ok: true, dir, active: activeInfo, rows, activeMatched: rows.some((row) => row.active) }
+  }
+
+  /** 把编辑框里的内容另存为一份人设（**不动** AGENTS.md）。 */
+  function personaSaveAs(name, text, { overwrite = false } = {}) {
+    const full = personaPathOf(name)
+    if (full === '') return { ok: false, reason: '人设名不合法（不能为空、不能带 / \\ : * ? " < > |，不能以点开头，不能含 ..）' }
+    const body = String(text ?? '')
+    if (body.trim() === '') return { ok: false, reason: '内容是空的，不存' }
+    if (body.length > 60 * 1024) return { ok: false, reason: '人设超过 60 KB，控制台不接这么大的文件' }
+    if (existsSync(full) && overwrite !== true) {
+      return { ok: false, reason: `已经有一份叫「${validPersonaName(name)}」的人设了。勾上"覆盖同名"再存，或者换个名字。` }
+    }
+    try {
+      mkdirSync(dirname(full), { recursive: true })
+      writeFileSync(full, body, 'utf8')
+    } catch (error) {
+      return { ok: false, reason: `存不下来：${error.message}` }
+    }
+    return { ok: true, name: validPersonaName(name), file: full, bytes: Buffer.byteLength(body, 'utf8') }
+  }
+
+  /**
+   * 切换当前人设：把选中的那份复制成 `AGENTS.md`，旧内容先备份。
+   *
+   * 顺序是"先备份旧 AGENTS.md，再写新的"——反过来一旦写失败，人就没了。
+   */
+  function personaActivate(name) {
+    const file = personaFile()
+    const full = personaPathOf(name)
+    if (!file) return { ok: false, reason: '还没配置数据目录（cwd），不知道人设放哪' }
+    if (full === '') return { ok: false, reason: '人设名不合法' }
+    if (!existsSync(full)) return { ok: false, reason: `没有这份人设：${validPersonaName(name)}` }
+    let text = ''
+    try { text = readFileSync(full, 'utf8') } catch (error) { return { ok: false, reason: `读不了 ${full}：${error.message}` } }
+    let backup = ''
+    try {
+      if (existsSync(file)) {
+        backup = personaBackupName(dirname(file))
+        writeFileSync(backup, readFileSync(file))
+      }
+      writeFileSync(file, text, 'utf8')
+    } catch (error) {
+      return { ok: false, reason: `切换失败：${error.message}` }
+    }
+    return {
+      ok: true, name: validPersonaName(name), file, backup, bytes: Buffer.byteLength(text, 'utf8'),
+      note: '已切换。宿主逐轮对账，下一轮就是新的人设；旧的那份已经备份。',
+    }
+  }
+
+  /**
+   * 把当前 `AGENTS.md` 收进人设库（"存下来以后还能切回来"）。
+   * 不带名字时按时间戳起一个，免得用户为了起名卡住。
+   */
+  function personaArchiveCurrent(name = '') {
+    const file = personaFile()
+    if (!file || !existsSync(file)) return { ok: false, reason: '当前还没有 AGENTS.md，没得存' }
+    let text = ''
+    try { text = readFileSync(file, 'utf8') } catch (error) { return { ok: false, reason: `读不了：${error.message}` } }
+    const stamp = new Date().toISOString().slice(0, 10).replace(/-/g, '')
+    const fallback = `人设-${stamp}`
+    return personaSaveAs(validPersonaName(name) || fallback, text, { overwrite: false })
+  }
+
   function personaRead() {
     const file = personaFile()
     if (!file) return { ok: false, reason: '还没配置数据目录（cwd），不知道人设文件放哪' }
@@ -1406,6 +1554,8 @@ export function createSupervisor(config, deps = {}) {
     perf, jobsView, groups, openDataDir, setDataDir, browseDataDir,
     // 人设读写（只认 cwd/AGENTS.md，见 personaFile 的注释）；backups 只读不删
     personaRead, personaWrite, personaBackups, personaBackupText, personaTemplate,
+    // 人设库：personas/*.md 是备选，AGENTS.md 是唯一生效的那份
+    personaList, personaSaveAs, personaActivate, personaArchiveCurrent,
     // 每个调用方（每个 SSE 连接）拿一份独立 tailer：共用模块级单例会让两个面板互相"偷"事件，
     // 也会让同一进程里的第二个 supervisor 读到别人的事件文件。
     tailer: () => createTraceTailer(config.logs?.trace ?? ''),

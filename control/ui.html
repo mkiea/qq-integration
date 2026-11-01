@@ -333,6 +333,14 @@
         <span class="meta" id="personaState"></span>
       </div>
       <div class="meta" id="personaPath" style="margin:4px 0 6px"></div>
+      <div class="row" style="margin:0 0 8px">
+        <select id="personaPick" title="人设库里的备选（personas/*.md）。只有切换成 AGENTS.md 的那份才生效。"
+          style="min-width:240px"></select>
+        <button title="把选中的这份复制成 AGENTS.md（旧内容先备份）。宿主逐轮对账，下一轮生效。" onclick="activatePersona()">用这份</button>
+        <button title="把编辑框里的内容另存为一份新人设（不会动 AGENTS.md）" onclick="savePersonaAs()">另存为人设</button>
+        <button title="把当前 AGENTS.md 收进人设库，以后能切回来" onclick="archivePersona()">收进人设库</button>
+        <span class="meta" id="personaPickState"></span>
+      </div>
       <div class="meta" id="personaCheck" style="margin:0 0 8px"></div>
       <textarea id="personaText" spellcheck="false"
         title="这是她的全部人设：说话规矩、底线、对谁说什么。改完点「保存」。"
@@ -1436,6 +1444,104 @@ async function loadJobs() {
  * 自动把内容冲掉，那比没有这个面板更糟。所以只有 `force=true`（用户主动点重新载入、
  * 或刚保存完）才覆盖编辑框。
  */
+/**
+ * 人设库（2026-11-01 夜，用户报「人设框没法选人设」）。
+ *
+ * 契约要记住：**只有 AGENTS.md 生效**（宿主只认这个文件名）。`personas/*.md` 是备选，
+ * 「用这份」= 把它复制成 AGENTS.md（旧内容先备份）。所以下拉里的"当前"是**内容比对**
+ * 出来的，不是"上次点了谁"—— 手改过 AGENTS.md 之后，它就不属于任何一份了。
+ */
+async function loadPersonas() {
+  const sel = document.getElementById('personaPick');
+  const state = document.getElementById('personaPickState');
+  if (!sel || !state) return;
+  try {
+    const r = await api('/api/personas');
+    if (r.ok !== true) { state.textContent = '⚠️ ' + (r.reason || '列不出人设库'); return; }
+    const rows = Array.isArray(r.rows) ? r.rows : [];
+    if (rows.length === 0) {
+      sel.innerHTML = '<option value="">（人设库是空的）</option>';
+      state.textContent = r.active ? '当前 AGENTS.md 是散装内容，不属于任何一份 —— 想留住它就点「收进人设库」。' : '';
+      return;
+    }
+    sel.innerHTML = rows.map((row) => '<option value="' + escapeHtml(row.name) + '"'
+      + (row.active ? ' selected' : '') + '>'
+      + (row.active ? '● ' : '') + escapeHtml(row.name)
+      + ' · ' + row.bytes + ' 字节'
+      + ' · ' + escapeHtml(new Date(row.updatedAt).toLocaleString('zh-CN', { hour12: false }))
+      + '</option>').join('');
+    state.textContent = r.activeMatched
+      ? rows.length + ' 份人设，当前生效的是「' + (rows.find((row) => row.active) || {}).name + '」'
+      : rows.length + ' 份人设；当前 AGENTS.md 与它们都不同（散装内容）';
+  } catch (error) {
+    state.textContent = '⚠️ ' + error.message;
+  }
+}
+
+async function activatePersona() {
+  const sel = document.getElementById('personaPick');
+  const state = document.getElementById('personaPickState');
+  const el = document.getElementById('personaText');
+  if (!sel || !state) return;
+  const name = sel.value;
+  if (!name) { state.textContent = '先选一份人设'; return; }
+  if (el && el.dataset.dirty === '1'
+    && !confirm('编辑框里有没保存的修改。切换人设会重新载入文件，那些修改会丢。继续？')) return;
+  if (!confirm('把「' + name + '」设为当前人设？\n\n当前 AGENTS.md 会先备份，然后被这份覆盖。')) return;
+  state.textContent = '切换中…';
+  try {
+    const r = await api('/api/personas/activate', { method: 'POST', body: JSON.stringify({ name }) });
+    if (r.ok !== true) { state.textContent = '⚠️ ' + (r.reason || '切换失败'); return; }
+    const backupName = r.backup ? String(r.backup).split(/[\\/]/).pop() : '';
+    state.textContent = '✅ 已切到「' + r.name + '」' + (backupName ? '（旧的备份：' + backupName + '）' : '')
+      + (r.note ? ' · ' + r.note : '');
+    loadPersona(true);
+    loadPersonas();
+    loadPersonaBackups();
+  } catch (error) {
+    state.textContent = '⚠️ ' + error.message;
+  }
+}
+
+async function savePersonaAs() {
+  const el = document.getElementById('personaText');
+  const state = document.getElementById('personaPickState');
+  if (!el || !state) return;
+  const name = prompt('给这份人设起个名字（会存成 personas/<名字>.md，不动 AGENTS.md）：');
+  if (name === null) return;
+  const trimmed = String(name).trim();
+  if (trimmed === '') { state.textContent = '名字不能为空'; return; }
+  state.textContent = '保存中…';
+  try {
+    let r = await api('/api/personas/save', { method: 'POST', body: JSON.stringify({ name: trimmed, text: el.value }) });
+    if (r.ok !== true && /已经有一份/.test(String(r.reason || ''))) {
+      if (!confirm(r.reason + '\n\n覆盖它？')) { state.textContent = ''; return; }
+      r = await api('/api/personas/save', { method: 'POST', body: JSON.stringify({ name: trimmed, text: el.value, overwrite: true }) });
+    }
+    if (r.ok !== true) { state.textContent = '⚠️ ' + (r.reason || '存不下来'); return; }
+    state.textContent = '✅ 已存成「' + r.name + '」（' + r.bytes + ' 字节）。它还没生效——要生效点「用这份」。';
+    loadPersonas();
+  } catch (error) {
+    state.textContent = '⚠️ ' + error.message;
+  }
+}
+
+async function archivePersona() {
+  const state = document.getElementById('personaPickState');
+  if (!state) return;
+  const name = prompt('把当前 AGENTS.md 收进人设库，叫什么名字？（留空 = 按日期自动起名）', '');
+  if (name === null) return;
+  state.textContent = '收藏中…';
+  try {
+    const r = await api('/api/personas/archive', { method: 'POST', body: JSON.stringify({ name: String(name).trim() }) });
+    if (r.ok !== true) { state.textContent = '⚠️ ' + (r.reason || '收不进去'); return; }
+    state.textContent = '✅ 已收进人设库：「' + r.name + '」';
+    loadPersonas();
+  } catch (error) {
+    state.textContent = '⚠️ ' + error.message;
+  }
+}
+
 async function loadPersona(force) {
   const el = document.getElementById('personaText');
   const state = document.getElementById('personaState');
@@ -1840,6 +1946,7 @@ function loadDataGroup() {
   loadJobs();
   loadGroups();
   loadPersona();
+  loadPersonas();
   loadPersonaBackups();
 }
 
@@ -1855,7 +1962,7 @@ if (groupOpen('gData')) loadDataGroup();
 const GROUP_ENTRY = {
   gData: loadDataGroup,
   // 不传 force：有未保存的改动时 loadPersona 自己会跳过，不会把用户打的字冲掉。
-  gPersona: () => { loadPersona(); loadPersonaBackups(); },
+  gPersona: () => { loadPersona(); loadPersonas(); loadPersonaBackups(); },
   gDiag: () => { runDiagnose(); loadAcceptance(); },
   gLogin: () => loadQr(),
 };

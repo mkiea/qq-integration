@@ -177,6 +177,76 @@ const makeSup = (cwd) => createSupervisor({ cwd, logs: {}, ports: { control: 0, 
   check('I ★ 超预算时 note 明说会被截断', /截断/.test(String(big.note ?? '')), String(big.note ?? ''))
 }
 
+
+// ---------- J. 人设库：多份备选 + 切换（2026-11-01 夜，用户报「人设框没法选人设」） ----------
+/**
+ * 契约：宿主只认 `cwd/AGENTS.md` 这一个文件名 ⇒ **只有它生效**。
+ * 所以"选人设"不是改写某个开关，而是把选中的那份**复制成 AGENTS.md**，旧的先备份。
+ * 这里钉的是这条链上的四个危险点：名字穿越、覆盖别人、切换丢旧版、误报"当前"。
+ */
+{
+  const cwd = mkdtempSync(join(root, 'j-'))
+  const sup = makeSup(cwd)
+  const hasApi = typeof sup.personaSaveAs === 'function' && typeof sup.personaActivate === 'function'
+    && typeof sup.personaList === 'function'
+  check('J 人设库三个接口都在', hasApi, typeof sup.personaSaveAs)
+  if (!hasApi) {
+    for (const name of ['J 名字穿越被拒', 'J 另存为不动 AGENTS.md', 'J 同名默认不覆盖', 'J 覆盖要显式', 'J 切换会先备份旧的',
+      'J 切换后内容就是选中的那份', 'J 切换不存在的名字：拒绝且不动 AGENTS.md', 'J 列表用内容比对判"当前"',
+      'J 手改 AGENTS.md 后不再属于任何一份', 'J 收进人设库']) check(name, false, '接口不存在')
+  } else {
+    // 路径穿越：名字会拼成路径，`../` 等于任意文件写入
+    for (const bad of ['../evil', 'a/b', '..', '.hidden', '', 'x:y']) {
+      check(`J 名字穿越被拒：${JSON.stringify(bad)}`, sup.personaSaveAs(bad, '内容').ok === false, JSON.stringify(bad))
+    }
+    check('J 合法名字（中文/空格/短横线）可存', sup.personaSaveAs('凛 傲娇猫娘-v2', '版本甲').ok === true)
+
+    sup.personaWrite('当前生效的这一版')
+    const saved = sup.personaSaveAs('备选甲', '版本甲内容')
+    check('J 另存为不动 AGENTS.md', readFileSync(join(cwd, 'AGENTS.md'), 'utf8') === '当前生效的这一版')
+    check('J 另存为落在 personas/ 下', existsSync(join(cwd, 'personas', '备选甲.md')), String(saved.file))
+    check('J 同名默认不覆盖', sup.personaSaveAs('备选甲', '版本乙').ok === false)
+    check('J 拒绝时文件没被改', readFileSync(join(cwd, 'personas', '备选甲.md'), 'utf8') === '版本甲内容')
+    check('J 覆盖要显式 overwrite', sup.personaSaveAs('备选甲', '版本乙', { overwrite: true }).ok === true)
+    check('J 显式覆盖后内容真的换了', readFileSync(join(cwd, 'personas', '备选甲.md'), 'utf8') === '版本乙')
+
+    // 切换：旧 AGENTS.md 必须先进备份
+    const act = sup.personaActivate('备选甲')
+    check('J 切换成功', act.ok === true, JSON.stringify(act).slice(0, 100))
+    check('J ★ 切换前把旧的备份了', typeof act.backup === 'string' && act.backup !== '' && existsSync(act.backup))
+    check('J ★ 备份里是切换前的内容', readFileSync(act.backup, 'utf8') === '当前生效的这一版')
+    check('J 切换后内容就是选中的那份', readFileSync(join(cwd, 'AGENTS.md'), 'utf8') === '版本乙')
+
+    // 切换不存在的名字：拒绝，且 AGENTS.md 一个字都不能动
+    const before = readFileSync(join(cwd, 'AGENTS.md'), 'utf8')
+    const miss = sup.personaActivate('根本没有这份')
+    check('J ★ 切换不存在的名字：拒绝且不动 AGENTS.md',
+      miss.ok === false && readFileSync(join(cwd, 'AGENTS.md'), 'utf8') === before, String(miss.reason ?? ''))
+
+    // 列表：「当前」靠内容比对，不靠"上次点了谁"
+    const list = sup.personaList()
+    check('J 列表列出两份', list.rows.length === 2, JSON.stringify(list.rows.map((r) => r.name)))
+    check('J 当前生效的那份被标成 active',
+      list.rows.filter((r) => r.active).map((r) => r.name).join(',') === '备选甲',
+      JSON.stringify(list.rows.map((r) => `${r.name}:${r.active}`)))
+    check('J activeMatched=true', list.activeMatched === true)
+
+    // 手改 AGENTS.md 之后：谁都不该再被报成"当前"
+    sup.personaWrite('我手改过的一段完全不同的东西')
+    const after = sup.personaList()
+    check('J ★ 手改 AGENTS.md 后不再属于任何一份（不谎报 active）',
+      after.rows.every((r) => r.active === false) && after.activeMatched === false,
+      JSON.stringify(after.rows.map((r) => `${r.name}:${r.active}`)))
+
+    // 收进人设库：把当前散装内容留成一份
+    const arch = sup.personaArchiveCurrent('手改版')
+    check('J 收进人设库成功', arch.ok === true, String(arch.reason ?? ''))
+    check('J 收进去的就是当时那份内容',
+      readFileSync(join(cwd, 'personas', '手改版.md'), 'utf8') === '我手改过的一段完全不同的东西')
+    check('J 收进去之后它被认成当前', sup.personaList().rows.find((r) => r.name === '手改版')?.active === true)
+  }
+}
+
 console.log(`\n${passed} passed, ${failed} failed`)
 if (failed > 0) process.exitCode = 1
 try { rmSync(root, { recursive: true, force: true }) } catch {}

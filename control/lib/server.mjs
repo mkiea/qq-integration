@@ -189,6 +189,20 @@ export function createControlHandler({ config, token, api, ui = '', uiFile = '',
         return
       }
       /**
+       * 人设库（2026-11-01 夜，用户报「人设框没法选人设」）。
+       *
+       * `cwd/personas/*.md` 是备选，`cwd/AGENTS.md` 是唯一生效的那份（宿主只认这个文件名）。
+       * 所以"选人设"= 把选中的复制成 AGENTS.md，旧内容先备份。
+       */
+      if (request.method === 'GET' && path === '/api/personas') {
+        if (typeof api.personaList !== 'function') {
+          json(response, 200, { ok: false, reason: '当前控制台版本不支持人设库' })
+          return
+        }
+        json(response, 200, api.personaList())
+        return
+      }
+      /**
        * 人设的历史备份清单（2026-11-01 夜，用户问「替换有没有备份」）。
        *
        * 只读：列文件名/大小/时间，**不提供删除、也不提供"直接回滚"**——
@@ -536,6 +550,25 @@ export function createControlHandler({ config, token, api, ui = '', uiFile = '',
               return { ok: false, reason: `请求里缺少 text（收到 ${JSON.stringify(body?.text ?? null)}）` }
             }
             return api.personaWrite(body.text)
+          },
+          /**
+           * 人设库的三个动作（2026-11-01 夜）。名字只收"像名字的字符串"，路径一律由
+           * supervisor 拼 —— 这里多一个参数就等于多一个写入漏洞。
+           */
+          '/api/personas/save': () => {
+            if (typeof api.personaSaveAs !== 'function') return { ok: false, reason: '当前控制台版本不支持人设库' }
+            if (typeof body.name !== 'string') return { ok: false, reason: '请求里缺少 name' }
+            if (typeof body.text !== 'string') return { ok: false, reason: '请求里缺少 text' }
+            return api.personaSaveAs(body.name, body.text, { overwrite: body.overwrite === true })
+          },
+          '/api/personas/activate': () => {
+            if (typeof api.personaActivate !== 'function') return { ok: false, reason: '当前控制台版本不支持切换人设' }
+            if (typeof body.name !== 'string') return { ok: false, reason: '请求里缺少 name' }
+            return api.personaActivate(body.name)
+          },
+          '/api/personas/archive': () => {
+            if (typeof api.personaArchiveCurrent !== 'function') return { ok: false, reason: '当前控制台版本不支持收进人设库' }
+            return api.personaArchiveCurrent(typeof body.name === 'string' ? body.name : '')
           },
           '/api/config': () => {
             if (typeof saveConfig !== 'function') return { ok: false, reason: '配置保存不可用' }

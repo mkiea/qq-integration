@@ -171,7 +171,23 @@ async function boot(overrides = {}) {
     }
     return findReason(needle).length > 0
   }
-  return { bridge, server, send, notice, request, findReason, findStage, waitForReason, sessions, emitSession }
+  /**
+   * 等到某个 stage 真的出现（最多 timeoutMs）。和 `waitForReason` 同一理由。
+   *
+   * 为什么补这个（2026-11-01）：`出站回复回挂到同一条 trace` 那条断言一直用固定 `settle: 120`，
+   * 空载跑 10 次红 1~3 次。实测旧版源码同样会红（旧版 9/10、新版 7/10，n=10 时这点差异
+   * 不显著）⇒ **不是哪次改动引入的，是这条断言本身在赌机器有多闲**。
+   * 一个会随机变红的测试比没有测试更糟：它会训练人忽略红色。
+   */
+  const waitForStage = async (stage, { timeoutMs = 3000, stepMs = 20 } = {}) => {
+    const startedAt = Date.now()
+    while (Date.now() - startedAt < timeoutMs) {
+      if (findStage(stage).length > 0) return true
+      await new Promise((resolve) => setTimeout(resolve, stepMs))
+    }
+    return findStage(stage).length > 0
+  }
+  return { bridge, server, send, notice, request, findReason, findStage, waitForReason, waitForStage, sessions, emitSession }
 }
 
 // ---- 1) 白名单静默丢弃 ----
@@ -387,6 +403,8 @@ async function boot(overrides = {}) {
   const h = await boot()
   const before = h.bridge.trace.recent({ limit: 1 })[0]?.id
   await h.send('请回复我', {}, { settle: 120 })
+  // 固定 settle 只是在赌机器有多闲（见 waitForStage 的注释）；真等 reply 落进 trace 再断言。
+  await h.waitForStage('reply')
   const traces = h.bridge.trace.listTraces({ limit: 2 }).filter((trace) => trace.id !== before)
   const chain = traces.length > 0 ? h.bridge.trace.get(traces[0].id) : []
   const stages = chain.map((event) => event.stage)

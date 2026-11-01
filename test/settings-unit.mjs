@@ -161,12 +161,18 @@ check('凡 schema 里带 apiKey/baseUrl/provider/model 的开关都标了依赖'
  *   和 `proactiveUsers` 同一种病。
  * 2026-11-01：`cardVideoWatchEnabled`（视频卡片抽帧）进面板，总数 95 → **96**、开关 74 → 75。
  *   同一个病：它默认开会**花流量和 3–10 秒**，用户不该只能靠读 CHANGELOG 才知道。
+ * 2026-11-01 晚：+2 行 —— `videoSpeechEnabled`（布尔，视频里的说话也转成文字）
+ *   + `videoSpeechSeconds`（数值，只转开头几秒），总数 96 → **98**、开关 75 → 76、数值 12 → 13。
+ *   起因还是同一个：`videoSpeechEnabled` 默认**开**，而它会让每条视频消息多等几秒 ——
+ *   "为什么她回得慢了"必须有地方可查、可关。`needs` 标的是「需配置」而不是「需自备服务」，
+ *   因为它依赖的东西和 `sttEnabled` 完全一样（DSH 自带的本地识别，免费离线），
+ *   标成"要买服务"会误导人去申请密钥。
  */
-check('依赖分布合理（开箱即用与需准备兼有；总数 96 = 75 开关 + 12 数值 + 1 时段 + 4 名单 + 2 下拉 + 2 文本）',
+check('依赖分布合理（开箱即用与需准备兼有；总数 99 = 76 开关 + 14 数值 + 1 时段 + 4 名单 + 2 下拉 + 2 文本）',
   allRows.filter((entry) => entry.needs === '').length >= 5
   && allRows.filter((entry) => entry.needs !== '').length >= 20
-  && allRows.length === 96
-  && boolRows.length === 75 && numRows.length === 12
+  && allRows.length === 99
+  && boolRows.length === 76 && numRows.length === 14
   && allRows.filter((entry) => entry.type === 'times').length === 1
   && allRows.filter((entry) => entry.type === 'list').length === 4
   && allRows.filter((entry) => entry.type === 'select').length === 2
@@ -205,12 +211,17 @@ check('快照把组级提示带给界面',
 
 // 用户的规则：**需要额外安装/配密钥的功能一律默认关**（"因为这些需要额外安装扩展"）。
 // 这条把规则钉进 schema：以后谁把这类开关的默认值改回 true，测试直接红。
+//
+// ⚠️ 只对 `type === 'boolean'` 的**开关**成立（2026-11-01 深夜修）：这条原来把
+// `ttsVoiceFormat`（下拉，默认 'silk'）也算进来了 —— 一个 select 的默认值**永远不可能**
+// 等于 `false`，所以那条断言是**不可满足**的，红得再久也没人会去修，
+// 最后只会训练自己忽略整个套件。规则说的是"开关默认关"，不是"下拉默认关"。
 const externalNeeds = new Set([PANEL_NEEDS.service, PANEL_NEEDS.key])
-const shouldBeOff = allRows.filter((entry) => externalNeeds.has(entry.needs))
+const shouldBeOff = allRows.filter((entry) => entry.type === 'boolean' && externalNeeds.has(entry.needs))
 const wronglyOn = shouldBeOff.filter((entry) => dict[entry.key]?.meta?.default !== false)
 check('凡标了「需外部服务 / 需密钥」的开关都必须默认关',
   wronglyOn.length === 0,
-  `检查了 ${shouldBeOff.length} 个：` + (wronglyOn.map((entry) => entry.key).join(',') || '全部默认关 ✅'))
+  `检查了 ${shouldBeOff.length} 个布尔开关：` + (wronglyOn.map((entry) => entry.key).join(',') || '全部默认关 ✅'))
 
 const snapshot = panelSnapshot({ ttsEnabled: true, groupOpsEnabled: false }, { defaults: { ttsEnabled: false, groupOpsEnabled: false } })
 const flat = snapshot.groups.flatMap((group) => group.rows)

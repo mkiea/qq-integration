@@ -519,6 +519,7 @@ if (!token) {
   box.style.gridColumn = '1/-1';
   box.innerHTML = '<h2>地址里没有 token</h2>'
     + '<div>控制台的每个接口都需要 token，所以下面所有面板都会显示「token 无效」。请用启动控制台时窗口里打印的那行完整地址打开，例如：</div>'
+    + '<span id="tokenQuick"></span>'
     + '<div style="margin-top:6px"><code>http://127.0.0.1:' + (location.port || '8880') + '/?token=&lt;控制台 token&gt;</code></div>'
     + '<div style="margin-top:6px" class="meta">控制台 token 固定保存在 <code>qq-control.json</code> 里；<b>宿主 3080 的 token 每次重启都会变</b>，两者不能混用。</div>';
   document.body.insertBefore(box, document.body.firstChild);

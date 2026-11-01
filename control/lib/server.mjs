@@ -115,8 +115,29 @@ export function createControlHandler({ config, token, api, ui = '', uiFile = '',
     const path = url.pathname
 
     if (request.method === 'GET' && (path === '/' || path === '/index.html')) {
+      let html = currentUi()
+      /**
+       * 地址里没带 token 时，把「该怎么进」直接变成一条可点的链接（2026-11-01）。
+       *
+       * 原来这里只发一句提示「用启动控制台时窗口里打印的那行完整地址」——
+       * 实际结果是用户打开 127.0.0.1:8880 看到满屏 401，以为整页挂了，
+       * 得自己去 qq-control.json 翻那个 24 位 token。提示写了，但没解决问题。
+       *
+       * 安全性：8880 只监听 127.0.0.1，能访问它的本机进程本来就能直接读 qq-control.json；
+       * 而跨源网页拿不到这个页面的 DOM（同源策略），token 不会因此被别的网站读走。
+       * 代价是这一页的截图会带 token —— 页面上已经写明"别截图外发"。
+       */
+      if (!url.searchParams.get('token') && !request.headers['x-control-token']) {
+        html = html.replace(
+          '<span id="tokenQuick"></span>',
+          `<div style="margin-top:10px"><a href="/?token=${encodeURIComponent(token)}" `
+          + 'style="display:inline-block;padding:8px 14px;border-radius:6px;background:#2563eb;color:#fff;text-decoration:none;font-weight:600">'
+          + '点这里用正确的地址打开</a>'
+          + '<span class="meta" style="margin-left:10px">（链接里带着 token，别截图发出去）</span></div>'
+        )
+      }
       response.writeHead(200, { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' })
-      response.end(currentUi())
+      response.end(html)
       return
     }
 

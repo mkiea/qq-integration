@@ -174,9 +174,9 @@
   </div>
   <nav class="menu" id="menu" aria-label="分组导航"></nav>
   <div class="side-actions">
-    <button class="primary" onclick="refresh()">刷新</button>
-    <button onclick="runDiagnose()">一键体检</button>
-    <button onclick="exportBundle()">导出诊断包</button>
+    <button title="重新拉取状态；不会重启任何进程" class="primary" onclick="refresh()">刷新</button>
+    <button title="跑一遍自检：端口 / 进程 / 配置 / 日志，只读不写" onclick="runDiagnose()">一键体检</button>
+    <button title="下载诊断包（zip）。默认含明文消息与 QQ 号，发给别人前请先勾「脱敏」" onclick="exportBundle()">导出诊断包</button>
     <label class="meta" title="QQ 号按位掩码、消息原文只留长度；要发给别人排查请保持勾选" style="display:flex;align-items:center;gap:6px">
       <input type="checkbox" id="exportRedact" checked /> 导出时脱敏
     </label>
@@ -191,8 +191,8 @@
     <section class="card" style="grid-column:1/-1">
       <h2>一键启动</h2>
       <div class="row">
-        <button class="primary" onclick="act('/api/all/start')">▶ 一键启动</button>
-        <button onclick="act('/api/host/restart')">重启 DSH 宿主</button>
+        <button title="按顺序拉起 宿主 → Waylay → 语音；已经在跑的会跳过" class="primary" onclick="act('/api/all/start')">▶ 一键启动</button>
+        <button title="重启 DSH 宿主：正在进行的回合会中断，约需数秒" onclick="act('/api/host/restart')">重启 DSH 宿主</button>
       </div>
       <div class="meta" style="margin-top:6px">
         顺序：Waylay → DSH 宿主 → 本地语音（未配置语音则跳过）；已在运行的项自动跳过，单项失败不影响后面的步骤。
@@ -203,7 +203,7 @@
       <div class="danger-zone" style="margin-top:12px">
         <div class="zh">⚠️ 停止类 · 会真的结束进程</div>
         <div class="row">
-          <button class="danger" onclick="act('/api/all/stop')">全部停止</button>
+          <button title="停掉 宿主 / Waylay / 语音 三个进程（Waylay 停掉 = 那个 QQ 下线）" class="danger" onclick="act('/api/all/stop')">全部停止</button>
           <span class="meta">分项的启停按钮在「概览」页。</span>
         </div>
       </div>
@@ -232,20 +232,20 @@
     <div class="subhead">Waylay · 当前后端（注入进 QQ 运行，没有独立进程）</div>
     <div id="waylayStatus" class="meta">（加载中…）</div>
     <div class="row" style="margin-top:6px">
-      <a id="waylayLink" href="http://127.0.0.1:13000/" target="_blank"><button>打开 Waylay 控制台（13000）</button></a>
-      <a id="waylayQrLink" href="http://127.0.0.1:13000/qrcode" target="_blank"><button>看登录二维码</button></a>
+      <a id="waylayLink" href="http://127.0.0.1:13000/" target="_blank"><button title="在新窗口打开 Waylay 自己的控制台（13000）">打开 Waylay 控制台（13000）</button></a>
+      <a id="waylayQrLink" href="http://127.0.0.1:13000/qrcode" target="_blank"><button title="在新窗口打开登录二维码页">看登录二维码</button></a>
       <span class="meta" id="waylayPaths"></span>
     </div>
     <div class="subhead">启动 / 重启</div>
     <div class="row">
-      <button class="primary" onclick="act('/api/host/start')">启动宿主</button>
-      <button onclick="act('/api/host/restart')">重启宿主</button>
-      <button onclick="act('/api/waylay/start')">启动 Waylay</button>
-      <button onclick="act('/api/tts/start')">启动本地语音</button>
+      <button title="启动 DSH 宿主（3080）" class="primary" onclick="act('/api/host/start')">启动宿主</button>
+      <button title="重启 DSH 宿主：正在进行的回合会中断，约需数秒" onclick="act('/api/host/restart')">重启宿主</button>
+      <button title="启动 Waylay（注入的那个 QQ）" onclick="act('/api/waylay/start')">启动 Waylay</button>
+      <button title="启动本地语音服务（8977）" onclick="act('/api/tts/start')">启动本地语音</button>
     </div>
     <div class="subhead">打开别的面板</div>
     <div class="row">
-      <a id="hostLink" href="#" target="_blank" style="display:none"><button>打开机器人控制台（3080）</button></a>
+      <a id="hostLink" href="#" target="_blank" style="display:none"><button title="在新窗口打开机器人控制台（3080）">打开机器人控制台（3080）</button></a>
       <span class="meta">登录状态与扫码都在 Waylay 的 13000 控制台；宿主在跑时还会多一个「机器人控制台（3080）」</span>
     </div>
     <!--
@@ -255,10 +255,10 @@
     <div class="danger-zone">
       <div class="zh">⚠️ 停止类 · 会真的结束进程</div>
       <div class="row">
-        <button class="danger" onclick="act('/api/host/stop')">停止宿主</button>
-        <button class="danger" id="waylayStopBtn" onclick="act('/api/waylay/stop')">停止 Waylay（会关掉被注入的那个 QQ）</button>
-        <button class="danger" onclick="act('/api/tts/stop')">停止本地语音</button>
-        <button class="danger" onclick="act('/api/all/stop')">全部停止</button>
+        <button title="停止 DSH 宿主：机器人随之离线" class="danger" onclick="act('/api/host/stop')">停止宿主</button>
+        <button title="停止 Waylay：被注入的那个 QQ 会下线（要重开就得重新扫码）" class="danger" id="waylayStopBtn" onclick="act('/api/waylay/stop')">停止 Waylay（会关掉被注入的那个 QQ）</button>
+        <button title="停止本地语音服务" class="danger" onclick="act('/api/tts/stop')">停止本地语音</button>
+        <button title="停掉 宿主 / Waylay / 语音 三个进程（Waylay 停掉 = 那个 QQ 下线）" class="danger" onclick="act('/api/all/stop')">全部停止</button>
       </div>
     </div>
     <div class="subhead" style="margin-top:12px">路径配置</div>
@@ -279,7 +279,7 @@
       <b>③</b> 日志是入口同目录的 <code>rin-inject.log</code>，二维码是 <code>qrcode.png</code>（未出码说明走了快登）。
     </div>
     <div class="row" style="margin-top:8px">
-      <button onclick="saveConfig()">保存路径配置</button>
+      <button title="把当前填的路径写进配置；之后要重启宿主才生效" onclick="saveConfig()">保存路径配置</button>
       <span class="meta">端口改动请编辑 qq-control.json（避免误改 6700 / 13000）</span>
     </div>
   </section>
@@ -307,7 +307,7 @@
       <input type="text" id="fChat" placeholder="会话过滤（如 g:2007407）" style="max-width:200px" oninput="renderStream()" />
       <label class="meta"><input type="checkbox" id="pauseStream" /> 暂停</label>
       <label class="meta"><input type="checkbox" id="autoScroll" checked /> 自动滚动</label>
-      <button onclick="clearStream()">清屏</button>
+      <button title="清空这个显示窗口；已落盘的文件不受影响" onclick="clearStream()">清屏</button>
       <span class="meta" id="streamCount"></span>
     </div>
     <div class="stream" id="streamBox">
@@ -327,7 +327,7 @@
   <section class="card" style="grid-column:1/-1">
     <h2>硬约束验收台 <span class="meta" id="acceptMeta">（v0.4「一切皆可调试」6 条硬约束的实时证据）</span></h2>
     <div class="row">
-      <button onclick="loadAcceptance()">重新验收</button>
+      <button title="重新跑一遍验收用例" onclick="loadAcceptance()">重新验收</button>
       <span class="meta">每条都用机器上现有的产物算证据；❌/⚠️ 会直接说明该点哪里</span>
     </div>
     <div id="acceptance" class="meta">（加载中…）</div>
@@ -351,8 +351,8 @@
   <section class="card" style="grid-column:1/-1">
     <h2>录制 · 回放 · 注入 <span class="meta" id="inboxMeta">（桥收到的每条消息都被录下来，可离线重跑）</span></h2>
     <div class="row">
-      <button onclick="loadInbox(true)">刷新录制列表</button>
-      <button onclick="replayRecent(5)">回放最近 5 条</button>
+      <button title="重新读取录制列表" onclick="loadInbox(true)">刷新录制列表</button>
+      <button title="把最近几条录制重新喂给桥（离线回放，不连 QQ、不发消息）" onclick="replayRecent(5)">回放最近 5 条</button>
       <label class="meta">回放条数 <input type="number" id="replayLimit" value="5" min="1" max="20" style="width:64px" /></label>
       <span class="meta" id="replayState"></span>
     </div>
@@ -373,8 +373,8 @@
       <input type="text" id="injUser" placeholder="发消息的 QQ 号（必填）" style="max-width:180px" />
       <input type="text" id="injText" placeholder="消息文本" style="max-width:280px" />
       <label class="meta"><input type="checkbox" id="injAtMe" checked /> 群里 @ 机器人</label>
-      <button onclick="doInject()">注入</button>
-      <button class="danger" onclick="clearQueue()">清空注入队列（进回收站）</button>
+      <button title="按上面的表单构造一条消息投给桥；默认不真的发到 QQ" onclick="doInject()">注入</button>
+      <button title="把注入队列移进回收站（不会真删）" class="danger" onclick="clearQueue()">清空注入队列（进回收站）</button>
       <span class="meta" id="injState"></span>
     </div>
     <h2 style="margin-top:12px">注入场景库 <span class="meta">（内置场景各验一条链路；缺参数会直接说缺什么）</span></h2>
@@ -383,11 +383,11 @@
       <input type="text" id="scenGroup" placeholder="群号" style="max-width:130px" />
       <input type="text" id="scenUser" placeholder="QQ 号" style="max-width:150px" />
       <input type="text" id="scenTarget" placeholder="被操作 QQ（踢人场景用）" style="max-width:190px" />
-      <button onclick="runScenario()">一键注入场景</button>
+      <button title="按选定的场景一键生成并投递消息" onclick="runScenario()">一键注入场景</button>
       <span class="meta" id="scenNote"></span>
     </div>
     <div class="row" style="margin-top:6px">
-      <button onclick="replayDiff()">回放 diff（配置对比）</button>
+      <button title="同一批录制跑两套配置，对比结果差异" onclick="replayDiff()">回放 diff（配置对比）</button>
       <input type="text" id="diffVariant" placeholder='要对比的配置，如 {"keywordEnabled": true}' style="max-width:320px" />
       <span class="meta" id="diffState"></span>
     </div>
@@ -397,11 +397,11 @@
   <section class="card" style="grid-column:1/-1">
     <h2>群资产 · 历史检索 <span class="meta" id="archiveMeta">（本机归档 <code>qq-history/</code>，群里 <code>/找</code> 用的就是它；控制台直接读文件，不打扰宿主）</span></h2>
     <div class="row">
-      <button onclick="loadArchive()">刷新概览</button>
+      <button title="重新读取历史归档概览" onclick="loadArchive()">刷新概览</button>
       <input type="text" id="archQ" placeholder="关键词（空格分隔 = 同时包含）" style="max-width:260px" />
       <label class="meta">天数 <input type="number" id="archDays" value="7" min="1" max="365" style="width:70px" /></label>
       <input type="text" id="archChat" placeholder="会话键，如 g:123（可留空）" style="max-width:190px" />
-      <button onclick="searchArchive()">检索</button>
+      <button title="在本地历史归档里按关键词检索（只读）" onclick="searchArchive()">检索</button>
       <span class="meta" id="archState"></span>
     </div>
     <pre id="archOut">（点「刷新概览」看归档体积与时间范围）</pre>
@@ -410,7 +410,7 @@
   <section class="card" style="grid-column:1/-1">
     <h2>性能面板 <span class="meta" id="perfMeta">（按「一条消息的 trace 链」算端到端延迟；P50/P95 直接来自真实事件）</span></h2>
     <div class="row">
-      <button onclick="loadPerf()">刷新</button>
+      <button title="重新拉取性能数据" onclick="loadPerf()">刷新</button>
       <input type="text" id="perfChat" placeholder="只看某个会话，如 g:123（可留空）" style="max-width:230px" />
       <label class="meta">时间窗 <select id="perfWindow">
         <option value="0">全部</option>
@@ -428,7 +428,7 @@
   <section class="card" style="grid-column:1/-1">
     <h2>定时任务 · 无人值守 <span class="meta" id="jobsMeta">（播报任务 / 入站 webhook / 掉线自愈 / 注入队列，全部来自桥写的运行快照）</span></h2>
     <div class="row">
-      <button onclick="loadJobs()">刷新</button>
+      <button title="重新拉取定时任务列表" onclick="loadJobs()">刷新</button>
       <span class="meta" id="jobsState"></span>
     </div>
     <pre id="jobsOut">（点「刷新」看任务清单与下次触发时间）</pre>
@@ -437,7 +437,7 @@
   <section class="card" style="grid-column:1/-1">
     <h2>群配置 <span class="meta" id="groupsMeta">（每个群的生效开关 + 白名单 + 最近回合）</span></h2>
     <div class="row">
-      <button onclick="loadGroups()">刷新</button>
+      <button title="重新拉取群列表" onclick="loadGroups()">刷新</button>
       <span class="meta" id="groupsState"></span>
     </div>
     <div id="groupsSwitches" class="meta"></div>
@@ -447,11 +447,11 @@
   <section class="card" style="grid-column:1/-1">
     <h2>日志文件</h2>
     <div class="row">
-      <button onclick="setLog('hostOut')">宿主 stdout</button>
-      <button onclick="setLog('hostErr')">宿主 stderr</button>
-      <button onclick="setLog('bridge')">桥调试日志</button>
-      <button onclick="setLog('trace')">事件文件</button>
-      <button onclick="setLog('audit')">写操作审计</button>
+      <button title="切到宿主 stdout 日志" onclick="setLog('hostOut')">宿主 stdout</button>
+      <button title="切到宿主 stderr 日志" onclick="setLog('hostErr')">宿主 stderr</button>
+      <button title="切到桥自己的调试日志" onclick="setLog('bridge')">桥调试日志</button>
+      <button title="切到事件文件（每条消息的处理轨迹）" onclick="setLog('trace')">事件文件</button>
+      <button title="切到写操作审计日志" onclick="setLog('audit')">写操作审计</button>
       <label class="meta"><input type="checkbox" id="follow" checked /> 自动跟随</label>
     </div>
     <pre id="log">（选择一份日志）</pre>
@@ -464,9 +464,9 @@
     <h2>登录二维码 <span class="meta" id="loginState">（读取中…）</span></h2>
     <div class="meta">Waylay 只在 QQ 侧产出新码时写一次文件；过期后文件就不再变化，看时间比看"文件在不在"可靠。</div>
     <div class="row">
-      <button onclick="refreshQrNow()">刷新二维码</button>
-      <button class="danger" onclick="act('/api/waylay/stop')">重开登录 ① 停止 Waylay（关掉那个 QQ）</button>
-      <button onclick="act('/api/waylay/start')">② 再启动 Waylay（重新走登录）</button>
+      <button title="重新向 Waylay 取一次二维码（旧的会失效）" onclick="refreshQrNow()">刷新二维码</button>
+      <button title="停止 Waylay：被注入的那个 QQ 会下线（要重开就得重新扫码）" class="danger" onclick="act('/api/waylay/stop')">重开登录 ① 停止 Waylay（关掉那个 QQ）</button>
+      <button title="启动 Waylay（注入的那个 QQ）" onclick="act('/api/waylay/start')">② 再启动 Waylay（重新走登录）</button>
       <span class="meta" id="qrState"></span>
     </div>
     <div style="margin-top:8px"><img id="qrImg" alt="登录二维码" style="display:none;width:220px;height:220px;image-rendering:pixelated;background:#fff;padding:6px;border-radius:8px" /></div>
@@ -487,8 +487,8 @@
       onerror="this.style.display='none';document.getElementById('qrModalHint').textContent='⚠️ 二维码图片加载失败（文件可能正在被写入），5 秒后会自动重试'" />
     <div class="meta" id="qrModalHint">正在读取二维码…</div>
     <div class="row">
-      <button onclick="refreshQrNow()">刷新二维码</button>
-      <a href="http://127.0.0.1:13000/qrcode" target="_blank"><button>在 Waylay 里打开</button></a>
+      <button title="重新向 Waylay 取一次二维码（旧的会失效）" onclick="refreshQrNow()">刷新二维码</button>
+      <a href="http://127.0.0.1:13000/qrcode" target="_blank"><button title="在新窗口打开二维码页">在 Waylay 里打开</button></a>
     </div>
   </div>
 </div>
@@ -595,6 +595,9 @@ function toast(text) {
 async function act(path) {
   const labels = {
     '/api/host/stop': '停止宿主',
+    // 重启 DSH 宿主会掐掉正在跑的那一轮（她可能正说到一半），以前这里没有确认框，
+    // 点错一次就是一回合白费 + 会话重建。四个入口共用这一个函数，改这里就全覆盖。
+    '/api/host/restart': '重启 DSH 宿主 —— 正在进行的回合会被中断',
     '/api/waylay/stop': '停止 Waylay —— 这会关掉那个被注入的 QQ（机器人账号会下线）',
     '/api/tts/stop': '停止本地语音',
     '/api/all/stop': '全部停止',
@@ -676,8 +679,8 @@ function renderSetupIntro() {
       <b>包括 <code>qq-canary.json</code></b>（重新生成金丝雀，以前贴出去的旧哨兵串就再也认不出来了）。
     </div>
     <div class="row" style="margin-top:12px">
-      <button class="primary" onclick="submitDataDir()">就用这个目录</button>
-      <button onclick="closeSetupModal()">稍后再说</button>
+      <button title="把选中的目录写进配置；之后需重启宿主才生效" class="primary" onclick="submitDataDir()">就用这个目录</button>
+      <button title="稍后再说；横幅会一直提醒，随时可以从横幅再打开" onclick="closeSetupModal()">稍后再说</button>
     </div>
     <div class="meta" id="setupMsg"></div>`;
 }
@@ -728,8 +731,8 @@ function renderSetupDone(r) {
     ${warnings.length ? `<div class="meta" style="margin-top:8px;color:#b45309">⚠️ ${warnings.map((w) => escapeHtml(w)).join('<br>⚠️ ')}</div>` : ''}
     <div class="meta" style="margin-top:8px">配置写好了，但<b>要重启宿主才生效</b>（插件启动时读一次配置）。重启不会影响你另外开的 QQ。</div>
     <div class="row" style="margin-top:12px">
-      <button class="primary" onclick="act('/api/host/restart')">重启宿主让它生效</button>
-      <button onclick="closeSetupModal()">好了</button>
+      <button title="重启 DSH 宿主：正在进行的回合会中断，约需数秒" class="primary" onclick="act('/api/host/restart')">重启宿主让它生效</button>
+      <button title="稍后再说；横幅会一直提醒，随时可以从横幅再打开" onclick="closeSetupModal()">好了</button>
     </div>
     <div class="meta">重启后这一行会变成「生效值」；如果重启后还弹这个向导，说明写入没被宿主读到（看上面那个文件路径对不对）。</div>`;
   setupBusy = false;
@@ -861,7 +864,7 @@ function renderRuntime(runtime, status) {
   const ddPath = dd && dd.path ? String(dd.path) : '';
   const ddBanner = dd && dd.configured === false
     ? `<div class="meta" style="margin-top:6px;color:#b45309">⚠️ 还没选数据根目录，现在临时用 <code>${escapeHtml(dd.path || '')}</code>（= cwd）。
-        <button onclick="openSetupModal()" style="margin-left:6px">现在就选</button><br>
+        <button title="现在就选数据目录" onclick="openSetupModal()" style="margin-left:6px">现在就选</button><br>
         <b>换目录不会自动搬旧数据</b>，旧的 qq-* 要自己拷过去（含 qq-canary.json）。</div>`
     : '';
   el.innerHTML = `
@@ -1217,7 +1220,7 @@ async function loadInbox(force = false) {
       <td class="meta">${item.at}</td>
       <td>${item.kind}</td>
       <td title="${escapeAttr(JSON.stringify(item.frame || {}))}">${escapeHtml(item.text)}</td>
-      <td><button onclick="replayOne(${item.index})">回放这条</button></td>
+      <td><button title="把这一条录制重新喂给桥（离线回放）" onclick="replayOne(${item.index})">回放这条</button></td>
     </tr>`).join('');
     inboxLoadedAt = Date.now();
   } catch (error) {

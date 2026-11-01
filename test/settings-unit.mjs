@@ -159,12 +159,14 @@ check('凡 schema 里带 apiKey/baseUrl/provider/model 的开关都标了依赖'
  *   总数 94 → **95**、下拉 1 → 2。
  *   起因：QQ 9.9.36 不再自动把 mp3 转 silk，"发不出语音"的根因藏在容器格式里而**没有任何界面能看见** ——
  *   和 `proactiveUsers` 同一种病。
+ * 2026-11-01：`cardVideoWatchEnabled`（视频卡片抽帧）进面板，总数 95 → **96**、开关 74 → 75。
+ *   同一个病：它默认开会**花流量和 3–10 秒**，用户不该只能靠读 CHANGELOG 才知道。
  */
-check('依赖分布合理（开箱即用与需准备兼有；总数 95 = 74 开关 + 12 数值 + 1 时段 + 4 名单 + 2 下拉 + 2 文本）',
+check('依赖分布合理（开箱即用与需准备兼有；总数 96 = 75 开关 + 12 数值 + 1 时段 + 4 名单 + 2 下拉 + 2 文本）',
   allRows.filter((entry) => entry.needs === '').length >= 5
   && allRows.filter((entry) => entry.needs !== '').length >= 20
-  && allRows.length === 95
-  && boolRows.length === 74 && numRows.length === 12
+  && allRows.length === 96
+  && boolRows.length === 75 && numRows.length === 12
   && allRows.filter((entry) => entry.type === 'times').length === 1
   && allRows.filter((entry) => entry.type === 'list').length === 4
   && allRows.filter((entry) => entry.type === 'select').length === 2

@@ -2067,3 +2067,30 @@ D 是这套里最重要的一条：一条能让管理员调任意 action 的指�
 后端补丁要**重启 QQ**；桥的改动要**重启宿主**。两个都做了才有效。
 验证方式：引用一条**QQ 重启之前**的消息（这次不会因为是旧消息就失败）；
 `qq-bridge-debug.log` 应出现 `quote resolve: … got=msg`，Waylay 日志出现 `[get_msg] kernel hit`。
+
+**⊕ 内核调用有了实测答案：`peerUid` 要的是 **uid**，不是 QQ 号（2026-11-01 夜 22:57）**
+
+两件事同时拿到了实证：
+
+**① `getMsgsByMsgId(peer, [id])` 确实能用** —— 手工探测（`!probe __msgcall`，用重启前的真实 id）：
+
+```json
+{ "result": 0, "errMsg": "", "msgList": [ { "msgId": "7703210488701921197", … "elements": [...] } ] }
+```
+
+**② 但 peer 要 `uid`（`u_IIms…FBA`），不是 uin（`2000000001`）** —— 同一方法、同一 msgId，
+只换 peerUid：用 uid ⇒ `msgList` 1 条；用 uin ⇒ `msgList` 空，且 `result:0, errMsg:""`
+（**不报错**，只是"没有"）。这就是一条静默失败：看起来调用成功，实际什么都没取到。
+
+桥上发的正是 uin（上游 `recallMsg` 那套惯例），所以第一次回源必然空。
+修法：Waylay 的 `get_msg` 在 C2C 且 peerUid 是纯数字时，用 `getUidByUin` 翻成 uid 再查；
+翻不出来就原值重试并打 `uid-not-found`。群聊那边 peerUid 就是群号，不翻。
+
+**③ 顺带发现一条零成本的捷径**：`replyElement` 里有 `sourceMsgText`（被引用那条的文字预览）。
+Waylay 现在把它塞进 reply 段的 `data.text`，桥在取不到原文时直接用它，
+措辞是"后端给的预览，可能被截断" —— 很多时候根本不需要问内核。
+
+### 测试
+
+`quote-fallback-unit` 16 → **19**（E 组：用预览、明说是预览、有预览时不再塞"最近几句"；
+旧版 16 通 3 红）。

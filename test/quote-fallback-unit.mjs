@@ -146,8 +146,8 @@ function makeBridge({ cwd, history = null } = {}) {
   return { bridge, server, send, lastTurn: () => turns.at(-1)?.text ?? '', stop: () => bridge.stop() }
 }
 
-/** 群里 @ 她 + 引用一条消息 + 一句文字。 */
-const quotedMsg = (text = '现在呢') => ({
+/** 群里 @ 她 + 引用一条消息 + 一句文字。`preview` 模拟后端随 reply 段给的原文预览。 */
+const quotedMsg = (text = '现在呢', preview = '') => ({
   bot: { readyState: 1 },
   userId: 1001,
   messageType: 'group',
@@ -155,7 +155,7 @@ const quotedMsg = (text = '现在呢') => ({
   text,
   atMe: true,
   ats: [],
-  reply: { messageId: '7703053729802896443', text: '' },
+  reply: { messageId: '7703053729802896443', text: preview },
   records: [], images: [], files: [], forwards: [], videos: [],
   messageId: 'g1',
   senderName: '小明',
@@ -231,6 +231,24 @@ const SELF_HISTORY = [
   check('D 仍然进 agent', text !== '', JSON.stringify(text.slice(0, 60)))
   check('D 没有历史时**不附**任何最近对话', !/最近几句是这样的/.test(text), JSON.stringify(text.slice(0, 160)))
   check('D 也不编一个"他："出来', !/他：/.test(text))
+  world.stop()
+}
+
+// ---------- E. 后端随 reply 段给了原文预览：直接用它（2026-11-01 夜） ----------
+/**
+ * 实测发现 Waylay 的 `replyElement` 里带 `sourceMsgText`（被引用那条的文字预览）。
+ * 也就是说很多时候**根本不需要再问一次内核** —— 有预览就用预览，措辞留余地（"可能被截断"）。
+ * 反向对照：没有预览时不许凭空编一句。
+ */
+{
+  const cwd = mkdtempSync(join(root, 'e-'))
+  const world = makeBridge({ cwd, history: SELF_HISTORY })
+  world.server.msgResult = null            // 内核这条也失败（冷缓存）
+  await world.send(quotedMsg('那这个呢', '周末去爬山吧'))
+  const text = world.lastTurn()
+  check('E 用上了后端给的预览', /周末去爬山吧/.test(text), JSON.stringify(text.slice(0, 160)))
+  check('E 明说这是"预览，可能被截断"', /预览/.test(text) && /截断/.test(text), JSON.stringify(text.slice(0, 120)))
+  check('E 有预览时不再塞"最近几句"（别给两份）', !/最近几句是这样的/.test(text), JSON.stringify(text.slice(0, 200)))
   world.stop()
 }
 

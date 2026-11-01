@@ -1579,3 +1579,46 @@ D 和 E 是这个功能的关键：它天生带"往磁盘写"的危险，只测"
 
 `ui.html` 是**按 mtime 热重载**的，`server.mjs` 不是。所以**刷新页面就能看到这个区块，但点保存会失败**——
 线上那个控制台进程还是旧代码，`/api/persona` 回 405。**要重启控制台进程**才真的能用。
+
+**㊴ 侧边栏里几十条 qq-xxx 平铺 → 收进一个「QQ」分组（2026-11-01，用户提「会话折叠」）**
+
+QQ 里**每个群 + 每个私聊都是一个独立会话**，用几天侧边栏就是十几条 `qq-xxxx` 排成一片。
+
+### 机制（实测宿主，不是猜的）
+
+宿主装的是 `dsh-workspace`，服务名 `workspaceRegistry`：`super(ctx, "workspaceRegistry")`。
+源码里三个关键点：
+
+- `resolveByPath(path)` —— 按规范化路径找工作区，**不创建**
+- `create(path, title)` —— 创建
+- `attachSession(sessionId)` —— 挂会话，内部有一条**硬约束**：
+  读会话 header 的 `cwd`，`realpath` 归一化后必须**逐字等于**工作区路径，否则抛错
+
+而桥创建会话时传的正是 `meta: { cwd: config.cwd }`，两边天然对得上 ——
+因此**不需要给每个聊天造子目录**，一个「QQ」工作区就能装下全部。
+
+### 为什么用 `ctx.get()` 而不是改 `inject`
+
+`inject` 是**硬依赖**：老版本宿主没有这个服务时，插件会一直等，整个 QQ 桥都不加载。
+而 `ctx.get('workspaceRegistry')` 拿不到就跳过，退化成"侧边栏不分组"，其余功能照常。
+取舍和 `attachments` 那里一致。
+
+### 失败方向
+
+`#attachToWorkspace` 全包 try/catch，只写 `debugLog`。
+理由是它跑在**会话创建的路径上**：这里抛出去，用户看到的是"消息没回复"，
+而不是"分组没生效"——后者无所谓，前者致命。所以失败方向刻意选"静默降级"。
+
+### 测试 `workspace-unit`：10 条，修前 4 通 6 红
+
+A 有注册表 → 真的 attach 且参数对 ｜ B 没有工作区 → 先 create（title = `QQ`）再 attach ｜
+**C 没有注册表（老宿主）→ 会话照常工作** ｜ **D create / attach 抛错 → 会话照常工作**。
+
+C 和 D 是这个功能的核心反面对照：只测"A 挂上了"，会把"挂的时候把会话搞挂"也判成通过。
+
+`seeing-unit` 86 / `find-unit` 72 / `ops-bridge-unit` 192 / `engage-bridge-unit` 90 /
+`trace-branches-unit` 44 / `persona-unit` 22 / `static-unit` 27 / `console-debug-unit` 100 /
+`control-unit` 153 / `token-hint-unit` 11 / `quote-fallback-unit` 12 全绿。
+
+**生效条件**：桥跑在宿主进程里 ⇒ **要重启宿主**（不是控制台）。重启后侧边栏应该出现一个
+「QQ」工作区，点开才是各个群/私聊会话。

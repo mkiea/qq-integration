@@ -1937,3 +1937,43 @@ J 组专测人设库：六个非法名字（含 `../evil`、`a/b`、`.hidden`）
 1 秒容忍窗口；多文件取最新；缺失文件跳过；空列表不误报；
 最后三条走**真 HTTP**：`/api/status.build` 存在、刚启动不 stale、把 ui.html 的 mtime 推到未来后
 立刻 stale 并指出是哪个文件 —— 只测纯函数等于没测到用户真正看到的东西。
+
+**㊼ 引用 100% 失败：Waylay 的 `get_msg` 认不出 reply 段的 id（2026-11-01 夜，主人「引用又被吞掉了」）**
+
+真机统计（`qq-trace.jsonl`，`stage=quote`）：共 38 次，**8 次失败全部在 11-01**（12:22 / 16:57 / 19:24 /
+19:37 / 19:40 / 19:42 / 19:59 / 22:09），10-29 那 17 次全成功 —— **换后端之后才出现**。
+
+`qq-bridge-debug.log` 里每次都一样：
+
+```
+quote resolve: id=7703053729802896443 got=null segments=0
+```
+
+### 根因（读 `waylay-src` 得出，不是猜）
+
+| 环节 | 事实 |
+|---|---|
+| 入站 | `events.js` 给每条消息分配**自己的短 id**（`1..2^31`），缓存 `cacheMsg(shortId, event)` |
+| reply 段 | `message.js` 给的是 `sourceMsgIdInRecords \|\| replayMsgId` —— **NTQQ 真实 msgId**（19 位） |
+| `get_msg` | 原来 `Number(params.message_id)` 直接当短 id 查缓存 |
+
+两套 id 空间不同 ⇒ 19 位 id 查"短 id 建键"的缓存**必然查不到**。`Number()` 还会静默改低位
+（`7703053729802896443` → `7703053729802896000`），所以连"看起来查过"都没有，直接 null。
+桥侧修不了：它收到的入站 `message_id` 是短 id、reply 段里是真实 id，**只有 Waylay 内部有映射表**。
+
+### 修法（在 `_tmp/rin-inject/waylay-src`，两处纯加法）
+
+- `onebot/events.js`：新增 `shortIdOf(msgId)` —— 真实 id → 短 id，**只读不建**
+  （没见过的就是没见过：进程重启、或缓存超 5000 条被挤掉，这时如实返回 null）。
+- `onebot/actions.js`：`get_msg` 先按短 id 查，查不到再反查一次。
+
+验证：造一个"缓存按短 id 建键"的假 translator，**真实 id 能取回内容、短 id 也能、没见过的仍 null**。
+不修的话那一行打印 `null`。改动说明写在 `waylay-src/PATCHES.md`（重新解压 Waylay 会冲掉，那里有复现命令）。
+
+### 桥侧只加了诊断，没改行为
+
+`quote resolve` 那行现在带 `hint`：id ≥16 位 ⇒ "真实 NTQQ id：若后端 get_msg 只认短 id，会恒为 null"；
+否则 ⇒ "后端没有这条消息（缓存已挤掉/重启过）"。下次一眼能分清是哪一类，不用再翻后端源码。
+
+⚠️ **生效条件**：`waylay-src` 是 QQ 启动时注入加载的 ⇒ **要重启 QQ**（连带 Waylay）。
+只重启宿主/控制台不生效。

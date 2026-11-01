@@ -35,7 +35,7 @@ function check(name, ok, extra = '') {
     <html><head>
       <title>这个梗是怎么来的</title>
       <style>.a{color:red}</style>
-      <script>var secret = "SCRIPT_SHOULD_NOT_APPEAR";</script>
+      <script>var payload = 'SCRIPT_SHOULD_NOT_APPEAR';</script>
     </head>
     <body>
       <!-- COMMENT_SHOULD_NOT_APPEAR -->

@@ -22,7 +22,7 @@ function check(name, ok, extra = '') {
 {
   const realFrame = {
     file: '40492477f9cf82860da42a867999620b.amr',
-    url: 'C:\\Users\\x\\nt_data\\Ptt\\2026-10\\Ori\\40492477f9cf82860da42a867999620b.amr',
+    url: 'C:\\Users\\someone\\nt_data\\Ptt\\2026-10\\Ori\\40492477f9cf82860da42a867999620b.amr',
     path: '',
   }
   const got = voiceLocalCandidates(realFrame)
@@ -53,10 +53,10 @@ function check(name, ok, extra = '') {
   check('.silk 放行', voicePathVerdict('C:\\p\\x.silk').ok === true)
   check('.mp3 放行', voicePathVerdict('C:\\p\\x.mp3').ok === true)
 
-  const notAudio = voicePathVerdict('C:\\Users\\x\\.ssh\\id_rsa')
+  const notAudio = voicePathVerdict('C:\\Users\\someone\\.ssh\\id_rsa')
   check('★ 无扩展名的密钥文件被拒', notAudio.ok === false && notAudio.reason === 'not-audio', notAudio.reason)
 
-  const txt = voicePathVerdict('C:\\Users\\x\\.env.txt')
+  const txt = voicePathVerdict('C:\\Users\\someone\\.env.txt')
   check('★ 非音频扩展名被拒', txt.ok === false && txt.reason === 'not-audio', txt.reason)
 
   const rel = voicePathVerdict('x.amr')

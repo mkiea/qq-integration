@@ -46,7 +46,7 @@ function check(name, ok, extra = '') {
 // ── ② 参数构造 ───────────────────────────────────────────────────────
 {
   const args = buildYtDlpArgs('https://www.bilibili.com/video/BV1xx', {
-    outDir: 'C:\\tmp\\out', maxSeconds: 45, ffmpegDir: 'C:\\bin',
+    outDir: 'D:\\no-such-dir\\out', maxSeconds: 45, ffmpegDir: 'C:\\bin',
   })
   check('带 --no-playlist（别把整个合集下下来）', args.includes('--no-playlist'))
   check('用 bv*+ba 而不是 worst[ext=mp4]（B 站是分轨）', args.join(' ').includes('bv*[height<=360]+ba'))
@@ -56,7 +56,7 @@ function check(name, ok, extra = '') {
   check('ffmpeg 位置被传入', args.includes('--ffmpeg-location') && args.includes('C:\\bin'))
   check('URL 以 -- 结束参数区（防 URL 被当成选项）', args[args.length - 2] === '--' && args[args.length - 1] === 'https://www.bilibili.com/video/BV1xx')
 
-  const noFfmpeg = buildYtDlpArgs('https://x.example/v', { outDir: 'C:\\tmp' })
+  const noFfmpeg = buildYtDlpArgs('https://x.example/v', { outDir: 'D:\\no-such-dir' })
   check('没给 ffmpeg 目录就不加该参数', !noFfmpeg.includes('--ffmpeg-location'))
   check('默认 60 秒', noFfmpeg.includes('*0-60'))
   check('秒数非法时回退 60', buildYtDlpArgs('https://x/v', { outDir: 'o', maxSeconds: 'abc' }).includes('*0-60'))

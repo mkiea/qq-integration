@@ -70,7 +70,7 @@ for (const model of MODELS) {
   }]
   const tool = await chat(model, [
     { role: 'system', content: '你可以调用工具。' },
-    { role: 'user', content: '把 C:/Users/someone/Desktop/chat role/qq_chat/notes.txt 发给我' },
+    { role: 'user', content: '把 <数据目录>/notes.txt 发给我' },
   ], { tools: toolDef })
   if (!tool.ok) {
     console.log('  ② 工具调用 ✗ 请求失败：', tool.error)

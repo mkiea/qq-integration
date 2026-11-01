@@ -1,5 +1,17 @@
 /** 功能分支审计：代码里声明了哪些 stage，真机 trace 里实际跑过哪些。 */
 import { readdirSync, readFileSync, existsSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+
+/**
+ * 数据目录不写死。
+ *
+ * 原来这里是 `C:/Users/<本机用户名>/Desktop/chat role/qq_chat` —— 既在这台机器之外跑不了，
+ * 又把用户名写进了仓库（privacy-unit 会红）。默认按家目录推，需要时用环境变量覆盖。
+ */
+function QQ_CHAT_DIR() {
+  return process.env.QQ_CHAT_DIR ?? join(homedir(), 'Desktop', 'chat role', 'qq_chat')
+}
 
 const declared = new Map()   // stage -> [文件:行]
 for (const f of readdirSync('lib').filter((x) => x.endsWith('.js'))) {
@@ -13,7 +25,7 @@ for (const f of readdirSync('lib').filter((x) => x.endsWith('.js'))) {
   })
 }
 
-const TRACE = 'C:/Users/someone/Desktop/chat role/qq_chat/qq-trace.jsonl'
+const TRACE = join(QQ_CHAT_DIR(), 'qq-trace.jsonl')
 const seen = new Map()
 if (existsSync(TRACE)) {
   for (const line of readFileSync(TRACE, 'utf8').trim().split('\n')) {

@@ -4,7 +4,7 @@
  * 复现的是这样一条真机消息：群里 @ 她、只发一张图、不打字。
  * `bridge.js` 的空文本门里，视频写的是 `(private || atMe)`，图片写的是 `private` ——
  * 于是同一条消息，视频能进、图片被 drop。真机 trace 留了证：
- *   g:100000001 / g:100000002 都是 `images=有` 仍然 drop。
+ *   g:3458****00 / g:4977****40 都是 `images=有` 仍然 drop。
  *
  * 这个文件同时钉两件事：
  *   ① 群聊 + @ + 纯图  → 必须进 agent（修复点）
@@ -220,8 +220,9 @@ function makeBridge(overrides = {}) {
 
   const lastTurn = () => turns.at(-1)?.text ?? ''
   const dropped = () => bridge.trace.recent({ limit: 5000, stage: 'drop' })
+  const mentions = () => bridge.trace.recent({ limit: 5000, stage: 'mention' })
 
-  return { bridge, server, config, turns, lastTurn, dropped, message, send, stop: () => bridge.stop() }
+  return { bridge, server, config, turns, lastTurn, dropped, mentions, message, send, stop: () => bridge.stop() }
 }
 
 /** 一条只有图片、没有文字的消息。 */
@@ -250,7 +251,12 @@ async function main() {
     const world = makeBridge()
     await world.send(world.message('', imageOnly({ atMe: false })), { expectTurn: false })
     check('群聊未 @ + 纯图 仍然被丢弃（@ 门还在）', world.lastTurn() === '', `turn=${JSON.stringify(world.lastTurn())}`)
-    check('丢弃理由进了 trace', world.dropped().length > 0, `n=${world.dropped().length}`)
+    // ⚠️ 2026-11-01 改：这条原来断言 `stage='drop'`。后来发现"无可用媒体"这个理由会说谎 ——
+    // 未 @ 的群图是被**门禁**拦下的，不是"没有可用内容"。现在这类消息记 `mention`，
+    // 所以断言跟着改到 mention 上（判的是"为什么丢"，不是"丢在哪一行"）。
+    const mention = world.mentions()
+    check('丢弃理由是「未 @」而不是「无可用媒体」', mention.length > 0 && world.dropped().length === 0,
+      `mention=${mention.length} drop=${world.dropped().length} reason=${JSON.stringify(mention[0]?.reason ?? '')}`)
     world.stop()
   }
 

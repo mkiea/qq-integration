@@ -9,9 +9,14 @@
  * 所以对比的是「同一个人的两种基座」，不是「好/坏」。
  */
 import { readFileSync } from 'node:fs'
+import { homedir } from 'node:os'
+import { join } from 'node:path'
+
+// 人设文件按家目录推（原来写死本机用户名的绝对路径：换机跑不了，还把用户名带进仓库）。
+const QQ_CHAT_DIR = process.env.QQ_CHAT_DIR ?? join(homedir(), 'Desktop', 'chat role', 'qq_chat')
+const persona = readFileSync(join(QQ_CHAT_DIR, 'AGENTS.md'), 'utf8')
 
 const BASE = 'http://127.0.0.1:11434/v1'
-const persona = readFileSync('C:/Users/someone/Desktop/chat role/qq_chat/AGENTS.md', 'utf8')
 
 const PROBES = [
   '今天好累啊',

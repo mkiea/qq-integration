@@ -14,8 +14,10 @@
  * 而不抛「消息不存在」—— 所以这条路必须自己有退路。
  *
  * 钉四条：
- *   A 取不到时附上她最近说过的话（修复点）
- *   B 只取 assistant，**不能把用户自己说的话当成她说的**（否则她会引用用户的话当自己的）
+ *   A 取不到时附上最近几句（修复点）
+ *   B **两个角色都给，但每句必须标「他：」/「你：」**（2026-11-01 夜改：
+ *     旧规则是"用户的话一律不许出现"，真机上把最常见场景——QQ 重启后历史全冷——
+ *     的兜底也废掉了；现在风险由标注承担，B 判的就是"标没标对"）
  *   C 解析成功时**不附**（别让模型拿两份内容去对）
  *   D 没有记忆文件时不编（宁可空着，也不许瞎猜）
  *
@@ -177,20 +179,32 @@ const SELF_HISTORY = [
   check('A 消息进了 agent', text !== '', JSON.stringify(text.slice(0, 60)))
   check('A 告诉她"取不到原文"', /没能取到内容/.test(text))
   check('A 附上了她最近说过的话', /本喵懒得动/.test(text), JSON.stringify(text.slice(0, 160)))
-  check('A 用的是"可能"而不是断言', /可能是在指其中之一/.test(text))
+  check('A 明说不知道指的是哪一句（不断言）', /不知道你指的是哪一句/.test(text), JSON.stringify(text.slice(0, 140)))
+  check('A 用条件句给出口', /如果引的就是其中一句/.test(text))
   check('A 提示对不上就问', /别硬猜|问他引的是哪句/.test(text))
   world.stop()
 }
 
-// ---------- B. 不能把用户说的话当成她说的 ----------
+// ---------- B. 用户说的话要出现，但**只能标成「他：」**（2026-11-01 夜改） ----------
+/**
+ * 旧判据是"用户的话一律不许出现"，怕她把用户的话当成自己说的。
+ * 真机把这个取舍翻过来了：后端 `get_msg` 只查内存缓存、QQ 一重启历史全冷，
+ * 而"重启完立刻引用一条旧消息"正是最常见的场景 —— 那时只给她自己的 3 句等于没帮上。
+ * 现在两个角色都给，风险由**标注**承担：每句前面必须有「他：」或「你：」。
+ */
 {
   const cwd = mkdtempSync(join(root, 'b-'))
   const world = makeBridge({ cwd, history: SELF_HISTORY })
   world.server.msgResult = null
   await world.send(quotedMsg())
   const text = world.lastTurn()
-  check('B 用户说的「今天干嘛了」没被当成她说的', !/今天干嘛了/.test(text), JSON.stringify(text.slice(0, 160)))
-  check('B 用户说的「真的假的」也没被当成她说的', !/真的假的/.test(text))
+  check('B 用户说的话出现了', /今天干嘛了/.test(text), JSON.stringify(text.slice(0, 200)))
+  check('B ★ 它被标成「他：」而不是「你：」', /他：今天干嘛了/.test(text) && !/你：今天干嘛了/.test(text),
+    JSON.stringify(text.slice(0, 200)))
+  check('B 她的话被标成「你：」', /你：没干嘛，躺着呢/.test(text), JSON.stringify(text.slice(0, 200)))
+  const indented = text.split('\n').filter((line) => /^ {2}\S/.test(line))
+  check('B 每一行都带角色前缀（不存在裸句子）',
+    indented.length > 0 && indented.every((line) => /^ {2}(他|你)：/.test(line)), JSON.stringify(indented.slice(0, 4)))
   world.stop()
 }
 
@@ -215,7 +229,8 @@ const SELF_HISTORY = [
   await world.send(quotedMsg())
   const text = world.lastTurn()
   check('D 仍然进 agent', text !== '', JSON.stringify(text.slice(0, 60)))
-  check('D 没有凭空的"你最近说过"', !/你最近说过/.test(text), JSON.stringify(text.slice(0, 160)))
+  check('D 没有历史时**不附**任何最近对话', !/最近几句是这样的/.test(text), JSON.stringify(text.slice(0, 160)))
+  check('D 也不编一个"他："出来', !/他：/.test(text))
   world.stop()
 }
 

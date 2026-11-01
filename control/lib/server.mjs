@@ -176,6 +176,19 @@ export function createControlHandler({ config, token, api, ui = '', uiFile = '',
         return
       }
       /**
+       * 人设的标准骨架 + 每节"要回答什么/别写什么"（2026-11-01 夜，用户要「标准格式」）。
+       *
+       * 只回文本，不落盘：点「插入骨架」是把模板填进编辑框，**保存仍然要人点**。
+       */
+      if (request.method === 'GET' && path === '/api/persona/template') {
+        if (typeof api.personaTemplate !== 'function') {
+          json(response, 200, { ok: false, reason: '当前控制台版本不支持人设骨架' })
+          return
+        }
+        json(response, 200, api.personaTemplate())
+        return
+      }
+      /**
        * 人设的历史备份清单（2026-11-01 夜，用户问「替换有没有备份」）。
        *
        * 只读：列文件名/大小/时间，**不提供删除、也不提供"直接回滚"**——

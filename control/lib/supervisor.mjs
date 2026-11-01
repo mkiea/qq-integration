@@ -19,6 +19,9 @@ import { describeStatus, parseListenerPid, stopPlan, waylayLaunchCommand, waylay
 import { normalizeDataDir, upsertPatchValue } from '../../lib/panel.js'
 // 系统选文件夹窗口：实现住在零依赖的 `lib/dir-pick.js`，宿主面板与控制台向导共用同一份。
 import { pickFolderDialog } from '../../lib/dir-pick.js'
+// 人设标准格式：结构/预算/校验。住在 `lib/` 是因为它描述的是**宿主怎么读这个文件**，
+// 不是控制台的界面逻辑（宿主侧的预算、截断顺序都在那份定义里）。
+import { PERSONA_BUDGET_BYTES, PERSONA_SECTIONS, PERSONA_TEMPLATE, analyzePersona } from '../../lib/persona-spec.js'
 import { createTraceTailer, filterEvents, formatChain, groupChains, readRuntime, readTraceFile, summarizeEvents } from './trace.mjs'
 import { formatDiagnose, runDiagnose } from './diagnose.mjs'
 import { buildZip, fileEntry } from './zip.mjs'
@@ -1277,16 +1280,28 @@ export function createSupervisor(config, deps = {}) {
   function personaRead() {
     const file = personaFile()
     if (!file) return { ok: false, reason: '还没配置数据目录（cwd），不知道人设文件放哪' }
-    if (!existsSync(file)) return { ok: true, file, exists: false, text: '', bytes: 0, lines: 0 }
+    if (!existsSync(file)) return { ok: true, file, exists: false, text: '', bytes: 0, lines: 0, analysis: analyzePersona('') }
     try {
       const text = readFileSync(file, 'utf8')
       const st = statSync(file)
       return {
         ok: true, file, exists: true, text,
         bytes: st.size, lines: text.split('\n').length, updatedAt: st.mtimeMs,
+        // 校验跟着读一起回：面板不用再多打一次接口，也不会出现"文字是新的、结论是旧的"。
+        analysis: analyzePersona(text),
       }
     } catch (error) {
       return { ok: false, reason: `读不了 ${file}：${error.message}` }
+    }
+  }
+
+  /** 标准骨架 + 每节的"要回答什么/别写什么"。面板拿它做提示，不落盘。 */
+  function personaTemplate() {
+    return {
+      ok: true,
+      template: PERSONA_TEMPLATE,
+      budgetBytes: PERSONA_BUDGET_BYTES,
+      sections: PERSONA_SECTIONS.map(({ id, title, required, targetBytes, ask, avoid }) => ({ id, title, required, targetBytes, ask, avoid })),
     }
   }
 
@@ -1390,7 +1405,7 @@ export function createSupervisor(config, deps = {}) {
     inboxList, replay, inject, clearQueue, archiveStats, archiveSearch,
     perf, jobsView, groups, openDataDir, setDataDir, browseDataDir,
     // 人设读写（只认 cwd/AGENTS.md，见 personaFile 的注释）；backups 只读不删
-    personaRead, personaWrite, personaBackups, personaBackupText,
+    personaRead, personaWrite, personaBackups, personaBackupText, personaTemplate,
     // 每个调用方（每个 SSE 连接）拿一份独立 tailer：共用模块级单例会让两个面板互相"偷"事件，
     // 也会让同一进程里的第二个 supervisor 读到别人的事件文件。
     tailer: () => createTraceTailer(config.logs?.trace ?? ''),

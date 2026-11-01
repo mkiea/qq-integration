@@ -329,9 +329,11 @@
       <div class="row">
         <button class="primary" title="保存到 AGENTS.md；旧内容会自动备份成 AGENTS.backup-<时间>.md" onclick="savePersona()">保存</button>
         <button title="丢掉未保存的修改，重新从磁盘读一遍" onclick="loadPersona(true)">重新载入</button>
+        <button title="把「标准格式」的骨架填进编辑框（不会自动保存）。已有内容会先问一句。" onclick="insertPersonaTemplate()">插入标准骨架</button>
         <span class="meta" id="personaState"></span>
       </div>
       <div class="meta" id="personaPath" style="margin:4px 0 6px"></div>
+      <div class="meta" id="personaCheck" style="margin:0 0 8px"></div>
       <textarea id="personaText" spellcheck="false"
         title="这是她的全部人设：说话规矩、底线、对谁说什么。改完点「保存」。"
         oninput="this.dataset.dirty='1'"
@@ -1450,9 +1452,51 @@ async function loadPersona(force) {
       + (r.exists
         ? ' · ' + r.bytes + ' 字节 · ' + r.lines + ' 行 · 改于 ' + new Date(r.updatedAt).toLocaleString('zh-CN', { hour12: false })
         : ' · <b>（还不存在，点保存会创建）</b>');
+    renderPersonaCheck(r.analysis);
     state.textContent = '';
   } catch (error) {
     state.textContent = '⚠️ ' + error.message;
+  }
+}
+
+/**
+ * 把「标准格式」的校验结果画出来（2026-11-01 夜）。
+ *
+ * 只画**可判定**的事：缺哪一节、超没超预算、有没有踩已知的坑。
+ * 不画"质量分"——那种分只会让人去优化分，而不是优化她。
+ */
+function renderPersonaCheck(analysis) {
+  const box = document.getElementById('personaCheck');
+  if (!box) return;
+  if (!analysis) { box.textContent = ''; return; }
+  const parts = [];
+  const kb = (n) => (n / 1024).toFixed(1) + ' KiB';
+  parts.push('预算 ' + kb(analysis.bytes) + ' / ' + kb(analysis.budgetBytes)
+    + '（' + Math.round((analysis.ratio || 0) * 100) + '%）');
+  const present = (analysis.sections || []).filter((s) => s.present).length;
+  parts.push('标准小节 ' + present + '/' + (analysis.sections || []).length);
+  const missingReq = (analysis.sections || []).filter((s) => s.required && !s.present);
+  if (missingReq.length > 0) parts.push('缺必填：' + missingReq.map((s) => s.title).join('、'));
+  box.textContent = parts.join(' · ');
+  const findings = Array.isArray(analysis.findings) ? analysis.findings : [];
+  if (findings.length === 0) return;
+  const lines = findings.map((f) => (f.level === 'error' ? '❌ ' : f.level === 'warn' ? '⚠️ ' : '· ') + f.message);
+  box.innerHTML = escapeHtml(parts.join(' · ')) + '<br>' + lines.map((line) => escapeHtml(line)).join('<br>');
+}
+
+async function insertPersonaTemplate() {
+  const el = document.getElementById('personaText');
+  const state = document.getElementById('personaState');
+  if (!el) return;
+  if (el.value.trim() !== '' && !confirm('编辑框里已经有内容，插入骨架会覆盖它（磁盘上的文件还没动）。继续？')) return;
+  try {
+    const r = await api('/api/persona/template');
+    if (r.ok !== true) { if (state) state.textContent = '⚠️ ' + (r.reason || '拿不到骨架'); return; }
+    el.value = r.template || '';
+    el.dataset.dirty = '1';   // 只是填进编辑框，没保存
+    if (state) state.textContent = '已填入骨架（未保存）。把「（这里写：…）」换成你自己的话，再点保存。';
+  } catch (error) {
+    if (state) state.textContent = '⚠️ ' + error.message;
   }
 }
 

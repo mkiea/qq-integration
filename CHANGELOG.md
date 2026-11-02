@@ -2717,3 +2717,54 @@ format=json         qzreferrer=https://user.qzone.qq.com/<uin>/main
 - 之前 clone / fork 过的副本**仍然有**，只能各自重克隆。
 - 本机 `Desktop/chat role/qq-integration-mirror-backup.git` 是重写前的完整镜像（含原号），
   留着当回滚点，**不要 push 到任何远端**。
+
+**⊕¹⁷ 聊天记录（合并转发）终于通了：内核要的是真 msgId + 真 peer（2026-11-02 深夜）**
+
+主人 22:00 又说"聊天记录还是不行"。日志一句话定位：
+
+```
+[forward] getMultiMsg(peer,resId,true) → keys=result,errMsg,msgList count=0
+```
+
+**它不报错，只是安静地返回空数组** —— 上层读作"这条聊天记录本来就是空的"，于是她什么都不说。
+
+### 真正的签名（实测确定，别再猜）
+
+```
+getMultiMsg(peer, parentMsgId, msgId)     ← 三个实参，2、3 都要**真 msgId**
+顶层转发（不套转发）：同一个 msgId 传两次 → result=0、msgList 非空
+```
+
+之前两条都错，缺一不可：
+
+| 错的地方 | 现象 | 正解 |
+|---|---|---|
+| 第 3 个实参传 `true`/数字（当成 count） | `result=5`、`msgList` 空，**不报错** | 传 msgId 本身 |
+| `peer.peerUid` 传 QQ 号（uin） | `result=4 Data Not Existed!`（连 `getMsgsByMsgId` 都查不到，很容易误判成"消息过期"） | 私聊传 uid（`u_xxx`），群聊传群号 |
+
+为此桥要多送三个字段（OneBot v11 之外的扩展，别的后端忽略即可）：
+`msg_id`（转发段里本来就有）、`user_id`（后端用 `getUidByUin` 换成 uid）、`group_id`。
+
+### 两个真凶，一处都不能少
+
+1. **`lib/onebot.js` 的 forward 段解析把 `msg_id` 丢了** —— 这是真实入站走的那条路。
+   只改 bridge 里那段（injection/replay 用的）没有任何用。
+2. `lib/bridge.js` 展开时只把 base64 的 `resId` 当 `message_id` 发出去。
+
+### 新增 `forward-wiring-unit`（17 条）
+
+这次坏的是**接线**不是算法，所以钉的是"字段有没有带对"：私聊要带 `msgId`+`userId`、
+群里要带 `groupId`、只有 resId 的老载荷仍要照常发、`parseMessage` 喂原始帧后 `msgId` 还在。
+其中 E 组是**行为**断言（直接喂 OneBot 原始帧），因为源码正则只能钉住"这行没被删"，
+钉不住"喂进去还在"——两个都要。
+
+### 顺带：压测 / 稳定性 / 鲁棒性三个新套件（主人点名要的）
+
+| 套件 | 回答什么 | 本机实测 |
+|---|---|---|
+| `stress-unit` | 一条消息要多久、能吞多快 | 单条 avg 10ms / p95 28ms；突发 5000 条 ≈ 58 条/秒；事件循环滞后 p99 < 25ms |
+| `soak-unit` | 跑久了会不会变大变慢 | RSS 斜率 **−19.6 MB/分**（不涨）；handle 不增长；`seenMessages`/`recentTexts` 有界；稳态文件数不涨 |
+| `fuzz-unit` | 喂垃圾会不会死 | 21 种畸形帧 + 20 种畸形消息全过；120KB 文本 109ms 不卡死；重复 id 去重且不连累后续 |
+
+吞吐上限约 90 条/秒（单聊天），瓶颈是**每条消息 5 次同步写盘**（CPU profile：`writeFileUtf8` 10% + `rename` 3.5% + `mkdir` 3.2%）。
+对真实使用（每秒 1 条量级）绰绰有余，所以**没有**为此改代码 —— 改成异步写会带来"崩了丢最后一条"的新问题。

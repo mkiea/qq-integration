@@ -2209,3 +2209,25 @@ quote image download failed: download HTTP 400（invalid rkey -5503010）
 
 边界：QQ 本地没有缓存文件的图（很早、已清理）仍然取不到，会如实说"引用了 1 张图片（下载失败）"，
 不编内容。生效：**重启 QQ**（改的是启动脚本的 env + waylay-src），宿主不用动。
+
+**⊕⁶ 聊天记录（合并转发）：从空壳补成真取，并支持"转发里套转发"（2026-11-02 傍晚）**
+
+现象：她收到一条聊天记录时读作"展开后没有可读内容"。两条根因：
+
+1. `get_forward_msg` 是空壳（`// Would need to fetch...` + `return { messages: [] }`）；
+2. `message.js` 把转发段的 `id` 填成了**外层消息的 msgId**，而 `getMultiMsg` 要的是
+   `multiForwardMsgElement.resId` —— id 拿错，查什么都空。
+
+改动：`id` 改用 resId（`msg_id` 另存）；`get_forward_msg` 用 `getMultiMsg` 取内容并转成
+OneBot `node` 数组；**嵌套转发展开一层**（最多 2 层）；取不到时返回 `_error` 而不是空数组
+（空数组在上层读作"本来就空"，那是撒谎）。
+
+⚠️ 一个自己踩的坑：第一版把递归 depth 写死成 1，遇到嵌套直接爆栈 —— 递归参数必须真往下传。
+⚠️ 未验证：`getMultiMsg` 的真实签名（本机没有 NapCat 用的 `parseMessageV2`），
+三种实参形态依次试，第一次真机收到聊天记录时日志会打出哪个成功。
+
+### 顺带的静态审计（65 个 action）
+
+完全不碰内核、直接返回常量的空壳 **约 15 个**，其中对我们有意义的：
+`get_group_file_url`（群文件链接）、`get_essence_msg_list`（群精华）、`download_file`、
+`get_group_honor_info`。其余是 guild/cookies/资料类，她这条链路用不到。

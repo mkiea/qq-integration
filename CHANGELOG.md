@@ -2125,3 +2125,30 @@ Waylay 现在把它塞进 reply 段的 `data.text`，桥在取不到原文时直
 
 带 seq 时 `_peer.seq` 必须出现；**没有 seq 时不许塞 `seq: ""`**（空串会被后端当成"有个 seq 0"去查）。
 另外用桩验证了策略链：`byMsgId` 空 ⇒ 自动落到 `bySeq` 并成功取回，日志出现 `via=bySeq`。
+
+**⊕⊕⊕ 照 NapCat 的实证实现改：`bySeq` 要 5 个参数、seq 传字符串（2026-11-02 中午）**
+
+自己试了 `bySeq` 两轮都空。于是去读 NapCat 的 bundle（`Desktop/NapCat/shell/napcat.mjs`），
+它构造回复元素时用的就是这一行 —— **不是猜的，是抄的**：
+
+```js
+i = (await MsgApi.getMsgsBySeqAndCount(r.peer, n.toString(), 1, true, true)).msgList[0]
+```
+
+对照我们之前的调用，三处全错：
+
+| 点 | 我们 | NapCat |
+|---|---|---|
+| seq 类型 | `Number(seq)` | `seq.toString()` |
+| 参数个数 | 3 | **5**（尾两个 `true` 不能省） |
+| 取哪条 | 1 | 1 |
+
+这同时解释了另一个现象：它那条 `getMsgsByMsgId` 要走"短 id → {Peer, MsgId}"映射出的**真 msgId**，
+所以拿 `sourceMsgIdInRecords` 去查必然空 —— 我们的 byMsgId 从一开始就不该指望。
+
+**另有一个侧面证据**：NapCat bundle 里 `getMsgsByMsgId` 出现 17 次、`getSingleMsg` 2 次、
+`getSourceOfReplyMsg` 2 次 —— 它真的去内核取历史，所以 10-29 那 17 次引用全成功；
+Waylay 上游一次都没调过，这就是差距的根源。
+
+现在顺序：`byMsgId` → `bySeq`（5 参）→ `bySeq3`（3 参兜底）→ `singleMsg`，
+命中打 `kernel hit via=…`。桩测已验证：byMsgId 空 ⇒ bySeq(5 参) 命中。

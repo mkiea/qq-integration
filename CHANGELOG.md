@@ -2506,3 +2506,33 @@ hop2 200 h5.qzone.qq.com/qqnt/qzoneinpcpcqq/friend → 2 条：p_skey_forbid、p
 
 `★ 空值不许覆盖已有的非空 skey / p_skey`｜`先空后有值 → 最终是有值的那个`｜
 另有形态①②③覆盖 503/空值/重试。**这条判据直接对应真机现象，不是补出来的自洽。**
+
+**⊕¹⁷ 20001「输入内容过长」的真相：正文的字段名是 `con`，不是 `content`（2026-11-02 夜）**
+
+真机：`发布失败：code=20001 message=输入内容过长，请删减后重试`。
+**一句短句被说"过长"**，说明服务端根本没读到正文 —— 字段名错了。
+
+抄 NapCat 的表单形状，一次到位：
+
+```
+syn_tweet_verson=1  paramstr=1  con=<正文>  feedversion=1  ver=1
+ugc_right=<1|64>    to_sign=0   hostuin=<uin>  code_version=1
+format=json         qzreferrer=https://user.qzone.qq.com/<uin>/main
+```
+
+对比我们之前只发了 `hostuin/content/ugcRight`：**字段名错一个（content→con）、还少 8 个必填项**。
+服务端的报错完全没指向真因，这正是"错误信息误导"的典型 —— 和之前 `text 为空`、`没拿到 skey` 是同一类。
+
+### 两条实测（顺手把 --private 验了）
+
+1. `ugc_right=64` **真的生效**：发出来的那条在列表里 `secret=1`（`right=1` 是另一回事，别被它骗）。
+2. 该接口**不返回 tid**（只有 `code:0` + 正文回显），所以发布成功后补一次"取最新一条"拿 tid ——
+   以后要删才有得删。
+
+⚠️ 为了做上面这两条验证，我发了两条**当时是公开的**测试说说（"测试一下（仅自己可见）"），
+验证完立刻用 `emotion_cgi_delete_v6` 删掉了（两次都 `code 0`）。这点必须留痕：
+**公开内容哪怕几秒也是公开的，不该拿它当试验田。**
+
+### 测试 `qzone-unit` 30 → 32
+
+`★ 正文用字段名 con（不是 content）`｜`必填的版本/格式字段都在`｜`带 hostuin 与 ugc_right`。

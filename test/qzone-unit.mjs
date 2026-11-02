@@ -139,7 +139,10 @@ function check(name, ok, extra = '') {
   check('D 发布成功带出 tid', out.ok === true && out.tid === 'TID123', JSON.stringify(out))
   const post = seen.find((r) => r.method === 'POST')
   check('D ★ POST 带 g_tk（用 p_skey 算的那个）', /g_tk=\d+/.test(String(post?.url ?? '')), String(post?.url ?? '').slice(-24))
-  check('D 表单里有 hostuin 与 content', /hostuin=12345/.test(String(post?.body ?? '')) && /content=/.test(String(post?.body ?? '')), String(post?.body ?? '').slice(0, 80))
+  // ★ 真机：正文的字段名是 con 不是 content（用 content 会回 20001「输入内容过长」，极其误导）
+  check('D ★ 正文用字段名 con（不是 content）', /(^|&)con=/.test(String(post?.body ?? '')) && !/(^|&)content=/.test(String(post?.body ?? '')), String(post?.body ?? '').slice(0, 90))
+  check('D 表单带 hostuin 与 ugc_right', /hostuin=12345/.test(String(post?.body ?? '')) && /ugc_right=/.test(String(post?.body ?? '')), String(post?.body ?? '').slice(0, 90))
+  check('D 必填的版本/格式字段都在', /syn_tweet_verson=1/.test(String(post?.body ?? '')) && /feedversion=1/.test(String(post?.body ?? '')) && /format=json/.test(String(post?.body ?? '')), String(post?.body ?? '').slice(0, 120))
   check('D ★ cookie 里同时有 p_skey 与 skey', /p_skey=PSK/.test(String(post?.headers?.cookie ?? '')) && /skey=SK/.test(String(post?.headers?.cookie ?? '')), String(post?.headers?.cookie ?? '').slice(0, 60))
 }
 

@@ -31,16 +31,19 @@ const SALT = 'dsh-qq-onebot-bridge/privacy-guard/v1'
 const hash = (value) => createHash('sha256').update(`${SALT}:${value}`).digest('hex')
 
 /**
- * 需要禁止出现的真实标识**不写在这个文件里**（否则测试本身就成了泄露源）：
- * 从机器本地的私有配置收集（`~/.dsh/profiles/web/cordis.patch.yml` 的
- * allowUsers / allowGroups / adminUsers / botQq），或由 `DSH_QQ_PRIVATE_IDS`
- * 环境变量提供（CI 用）。收集不到就明确跳过这一项，而不是假装通过。
+ * 私有号清单**带种类**（2026-11-02 深夜加）：光有一个 Set 的话，群号泄露时回执写的是
+ * "没有真实 QQ 号"，提示直接指错方向。群号和人号是两条不同的处置线
+ * （人号＝账号泄露；群号＝"人和群的关系"泄露），必须分开报。
+ *
+ * 返回 `Map<id, 'QQ号' | '群号'>`；`collectPrivateIds()` 保留成薄包装（旧调用方不用改）。
  */
-export function collectPrivateIds({ env = process.env, home = homedir(), readFile = readFileSync } = {}) {
-  const ids = new Set()
+export function collectPrivateIdKinds({ env = process.env, home = homedir(), readFile = readFileSync } = {}) {
+  const found = new Map()
+  const add = (id, kind) => { if (/^\d{5,12}$/.test(id) && !found.has(id)) found.set(id, kind) }
   for (const value of String(env.DSH_QQ_PRIVATE_IDS ?? '').split(/[,\s]+/)) {
-    if (/^\d{5,12}$/.test(value)) ids.add(value)
+    if (/^\d{5,12}$/.test(value)) add(value, 'QQ号')
   }
+  const kindOf = (key) => (/(group|chat)/i.test(key) ? '群号' : 'QQ号')
   const candidates = [
     join(home, '.dsh', 'profiles', 'web', 'cordis.patch.yml'),
     join(home, '.dsh', 'profiles', 'web', 'cordis.yml'),
@@ -53,7 +56,7 @@ export function collectPrivateIds({ env = process.env, home = homedir(), readFil
     for (const key of ['allowUsers', 'allowGroups', 'adminUsers', 'botQq', 'rejectUsers', 'rejectGroups']) {
       const block = new RegExp(`^\\s*${key}\\s*:[ \t]*([^\n]*)((?:\n[ \t]+-[^\n]*)*)`, 'm').exec(text)
       if (!block) continue
-      for (const match of `${block[1]}\n${block[2]}`.matchAll(/\d{5,12}/g)) ids.add(match[0])
+      for (const match of `${block[1]}\n${block[2]}`.matchAll(/\d{5,12}/g)) add(match[0], kindOf(key))
     }
     // 再把整个插件配置块里**身份类键**的纯数字值一并纳入（键名会随版本增加/改名，
     // 漏一个键就等于少比对一个真号：本机实测旧实现只收到 4 个号）。
@@ -68,14 +71,24 @@ export function collectPrivateIds({ env = process.env, home = homedir(), readFil
         if (!/(qq|uin|user|admin|owner|group|chat|notify|friend)/i.test(key)) continue
         const value = line.replace(/^\s*[\w.-]+\s*:/, '')
         if (!/^\s*[[\]\d,\s'"]*$/.test(value)) continue
-        for (const match of value.matchAll(/\d{6,12}/g)) ids.add(match[0])
+        for (const match of value.matchAll(/\d{6,12}/g)) add(match[0], kindOf(key))
       }
     }
   }
-  return ids
+  return found
 }
 
-const PLACEHOLDER_IDS = new Set(['2000000001', '3000000001', '100000001', '100000002'])
+/** 只要 id 集合的调用方走这里（旧签名不变）。 */
+export function collectPrivateIds(options) {
+  return new Set(collectPrivateIdKinds(options).keys())
+}
+
+/**
+ * 占位号白名单：**仓库里允许出现的假号**。
+ * 2026-11-02 深夜重写历史时按类分配（人号 20000000xx / 3000000001，群号 1000000xx），
+ * 新加的假号必须登记在这里 —— 否则规则⑤ 会把它们当成"没登记的疑真实号"。
+ */
+const PLACEHOLDER_IDS = new Set(['2000000001', '2000000002', '2000000003', '2000000004', '3000000001', '100000001', '100000002'])
 
 /**
  * 本机的**私有昵称**（机器人自己的 QQ 昵称、群名片里的自定义别名……）。
@@ -230,7 +243,12 @@ check('没有硬编码的本机用户名/家目录路径', pathHits.length === 0
 // 判据是**"这台机器上真的存在"**——比"形状像路径"精确得多，也不会误伤文档里
 // 的虚构示例（`X:\qq-history`、`D:\evil`、`C:\NapCat\…`、`D:/voice/…` 都不存在）。
 // 例外：操作系统自带路径（`C:\Windows\`、`C:\Program Files\`）不含个人信息。
-const OS_PATH_ALLOW = [/^C:[\\/]Windows[\\/]/i, /^C:[\\/]Program Files(?: \(x86\))?[\\/]/i]
+// 白名单是"就算本机真有也不能算泄露"的系统/示例路径。
+// `C:\tmp` 是文档里的示例落盘目录（2026-11-02 加：历史里有两个文档 blob 用了它，
+// 它确实存在，但它指的是"临时目录"这件事本身，不指向这台机器）。
+// ⚠️ 分隔符写 `[\\/]+`：blob 里的路径常是**转义过的双反斜杠**（`C:\\tmp`），
+// 只吃一个分隔符会让白名单静默失效（第一版就是，误报 2 处）。
+const OS_PATH_ALLOW = [/^C:[\\/]+Windows[\\/]/i, /^C:[\\/]+Program Files(?: \(x86\))?[\\/]/i, /^C:[\\/]+tmp(?:[\\/]|$)/i]
 const DRIVE_PATH = /(?:^|[^\w:/])([A-Za-z]:[\\/][^\s"'`)\]},;]*)/g
 const realPathHits = []
 for (const { name, text } of textFiles) {
@@ -249,9 +267,9 @@ const cwdDefaultHits = textFiles
   .map(({ name }) => name)
 check('控制台配置探测不假设作者机器的目录', cwdDefaultHits.length === 0, cwdDefaultHits.join(','))
 
-// ----------------------------------------------------------- ② 真实 QQ 号 --
-const PRIVATE_IDS = collectPrivateIds()
-const idHits = []
+// ---------------------------------------------------- ② 真实 QQ 号 / 群号 --
+const PRIVATE_KINDS = collectPrivateIdKinds()
+const PRIVATE_IDS = new Set(PRIVATE_KINDS.keys())
 // 本机明明有 profile 却一个号都没收到 → 这是**检查失效**，必须红，不许静默 SKIP
 // （旧实现只打印 SKIP，于是"清单收集坏了"和"清单是空的"看起来一模一样）。
 const hasLocalProfile = (() => { try { return existsSync(join(homedir(), '.dsh', 'profiles')) } catch { return false } })()
@@ -260,14 +278,23 @@ check('私有号清单可用（本机有 profile 时不许静默跳过）',
 if (PRIVATE_IDS.size === 0) {
   console.log('SKIP 没有可用的私有号清单（本机无 profile 配置且未设置 DSH_QQ_PRIVATE_IDS），跳过真实号比对')
 } else {
+  const qqHits = []
+  const groupHits = []
   for (const { name, text } of textFiles) {
     for (const match of text.matchAll(/\b\d{5,12}\b/g)) {
       const value = match[0]
       // 先判真实号再考虑占位号：反过来会让"真实号恰好等于占位号"被静默放过。
-      if (PRIVATE_IDS.has(value)) idHits.push(`${name}: 命中私有号（${hash(value).slice(0, 8)}）`)
+      if (!PRIVATE_KINDS.has(value)) continue
+      const line = `${name}: 命中私有${PRIVATE_KINDS.get(value)}（${hash(value).slice(0, 8)}）`
+      if (PRIVATE_KINDS.get(value) === '群号') groupHits.push(line)
+      else qqHits.push(line)
     }
   }
-  check(`没有真实 QQ 号（比对 ${PRIVATE_IDS.size} 个本机私有号）`, idHits.length === 0, [...new Set(idHits)].slice(0, 5).join(' | '))
+  // 分开报：群号泄露（人↔群的关系）和账号泄露是两条处置线，混成一句会指错方向。
+  const nQQ = [...PRIVATE_KINDS.values()].filter((k) => k === 'QQ号').length
+  const nGroup = PRIVATE_KINDS.size - nQQ
+  check(`没有真实 QQ 号（比对 ${nQQ} 个人号）`, qqHits.length === 0, [...new Set(qqHits)].slice(0, 5).join(' | '))
+  check(`没有真实群号（比对 ${nGroup} 个群号）`, groupHits.length === 0, [...new Set(groupHits)].slice(0, 5).join(' | '))
   // 文件名同样是泄露面：`qq-control-<真实号>.json` 这种内容干净、名字泄露的情况不能被漏掉。
   const nameHits = []
   for (const name of tracked) {
@@ -275,7 +302,7 @@ if (PRIVATE_IDS.size === 0) {
       if (PRIVATE_IDS.has(match[0])) nameHits.push(name)
     }
   }
-  check('文件名里也没有真实 QQ 号', nameHits.length === 0, nameHits.slice(0, 3).join(','))
+  check('文件名里也没有真实 QQ 号/群号', nameHits.length === 0, nameHits.slice(0, 3).join(','))
 }
 check('占位号在示例/测试里被有意使用', textFiles.some(({ text }) => [...PLACEHOLDER_IDS].some((id) => text.includes(id))))
 

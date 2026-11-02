@@ -194,5 +194,44 @@ check('E extractJson 空串返回 null', extractJson('') === null)
   check('F 过了 TTL 会重新换票', calls === 2, String(calls))
 }
 
+
+
+// ---------- G. 带图的说说：先传图拿 richval，再带 richtype/richval 发布 ----------
+{
+  const posts = []
+  const qzone = createQzone({
+    fetchClientKey: async () => 'CK',
+    request: async (req) => {
+      if (req.url.includes('/jump')) {
+        return { status: 302, headers: { 'set-cookie': ['skey=S; Path=/', 'p_skey=P; Path=/'] }, body: '' }
+      }
+      if (req.url.includes('cgi_upload_image')) {
+        return { status: 200, headers: {}, body: '<script>frameElement.callback({"code":0,"data":{"albumid":"ALB","lloc":"LL","type":2,"height":800,"width":600}})</script>' }
+      }
+      posts.push(req)
+      return { status: 200, headers: {}, body: '_Callback({"code":0,"tid":"T1"})' }
+    },
+  })
+  const out = await qzone.publish('看图', { uin: 42, images: ['BASE64DATA'] })
+  check('G 带图发布成功', out.ok === true && out.tid === 'T1', JSON.stringify(out))
+  const body = String(posts.at(-1)?.body ?? '')
+  check('G ★ 表单带上 richtype=1', /richtype=1/.test(decodeURIComponent(body)), body.slice(0, 120))
+  check('G ★ richval 是「逗号开头 + albumid/lloc/type/宽高」的形状',
+    /richval=%2CALB%2CLL%2CLL%2C2%2C800%2C600%2C%2C800%2C600/.test(body), body.slice(0, 200))
+}
+
+{
+  const qzone = createQzone({
+    fetchClientKey: async () => 'CK',
+    request: async (req) => {
+      if (req.url.includes('/jump')) return { status: 302, headers: { 'set-cookie': ['skey=S; Path=/', 'p_skey=P; Path=/'] }, body: '' }
+      return { status: 200, headers: {}, body: '<script>frameElement.callback({"code":-100,"message":"上传失败"})</script>' }
+    },
+  })
+  let error = null
+  try { await qzone.publish('x', { uin: 1, images: ['B64'] }) } catch (e) { error = e }
+  check('G ★ 传图失败时要抛错并带 code/message', /传图失败/.test(String(error?.message ?? '')) && /-100/.test(String(error?.message ?? '')), String(error?.message ?? ''))
+}
+
 console.log(`\n${passed} passed, ${failed} failed`)
 if (failed > 0) process.exitCode = 1

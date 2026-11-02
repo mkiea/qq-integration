@@ -2536,3 +2536,39 @@ format=json         qzreferrer=https://user.qzone.qq.com/<uin>/main
 ### 测试 `qzone-unit` 30 → 32
 
 `★ 正文用字段名 con（不是 content）`｜`必填的版本/格式字段都在`｜`带 hostuin 与 ugc_right`。
+
+**⊕¹⁸ 带图的说说：需要什么（2026-11-02 夜）**
+
+主人问「说说发图需要什么」。答案不只是"传个图"，是一串**都不能少**的表单字段：
+
+### 第一步：传图到空间相册，换 `richval`
+
+`POST https://up.qzone.qq.com/cgi-bin/upload/cgi_upload_image?g_tk=<g_tk>`
+
+| 字段 | 值 | 缺了会怎样 |
+|---|---|---|
+| `picfile` | 图片的 **base64**（不带 `data:` 前缀） | 上传失败 |
+| `base64` | `1` | 服务端按文件流解析，报格式错 |
+| `uploadtype` / `albumtype` / `exttype` | `1` / `7` / `0` | 传进错误的相册分类 |
+| `refer` | `shuoshuo` | 图传了但不属于"说说"场景，richval 不能用 |
+| `output_type` | `jsonhtml` | 返回 HTML 而不是 JSON，解析不出来 |
+| `jsonhtml_callback` | `callback` | 同上 |
+| `skey` / `p_skey` / `uin` / `p_uin` / `zzpaneluin` | 票 | 401 或不认账 |
+| `upload_hd` + `hd_width/height/quality` | `1` / 2048 / 10000 / 96 | 传上去是压缩过的低清图 |
+
+返回是 `frameElement.callback({...})`，取 `data` 里的 `albumid/lloc/type/height/width`，
+拼成 **` ,albumid,lloc,lloc,type,height,width,,height,width`**（**以逗号开头，别问，照抄**）。
+
+### 第二步：发布时带上图
+
+在原表单上多加两个字段：
+
+- `richtype=1`
+- `richval=<richval>`；**多张图用 `\t` 连接**
+
+### 已落地
+
+`lib/qzone.js`：`uploadImage(ticket, base64)` + `publish(text, { images })`。
+`qzone-unit` 32 → **36**：`richtype=1` 出现、richval 形状正确、传图失败要抛错带 code。
+
+⚠️ 还没接进 `!moment`（下一步：`--image <路径>`，需要定大小上限与路径白名单）。

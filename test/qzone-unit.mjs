@@ -52,6 +52,27 @@ function check(name, ok, extra = '') {
   check('没有等号的坏行被跳过', !('garbage-without-equals' in jar))
 }
 
+/**
+ * ★ 真机事故（2026-11-02）：换票跳到 h5.qzone 那一跳会再回一组**空值**的
+ * `skey` / `p_skey`（并伴随 `p_skey_forbid`）。按"后来者优先"处理，
+ * 就把前面拿到的有效票覆盖成空 —— 表现是 HTTP 200、15 个 cookie、票却是空的，
+ * 看起来像"服务端不给票"，而同一时刻 curl 是好的。
+ */
+{
+  const jar = parseSetCookies([
+    'skey=GOOD; Path=/',            // 第一跳拿到的有效票
+    'p_skey=GOODPSK; Path=/',
+    'p_skey_forbid=1; Path=/',      // 最后一跳的"禁止"标记
+    'p_skey=; Path=/',              // 最后一跳把它清空 —— 不许覆盖
+    'skey=; Path=/',
+  ])
+  check('★ 空值不许覆盖已有的非空 skey', jar.skey === 'GOOD', JSON.stringify(jar))
+  check('★ 空值不许覆盖已有的非空 p_skey', jar.p_skey === 'GOODPSK', JSON.stringify(jar))
+
+  const reversed = parseSetCookies(['skey=; Path=/', 'skey=GOOD; Path=/'])
+  check('先空后有值时，最终是那个有值的', reversed.skey === 'GOOD', JSON.stringify(reversed))
+}
+
 // ---------- C. 换票失败必须抛错（真机两种形态都出现过） ----------
 // 形态①：HTTP 503，Set-Cookie 里 skey/p_skey **字段都在、值是空的**（真机就是这么报的）
 {

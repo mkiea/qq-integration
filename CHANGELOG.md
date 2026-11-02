@@ -2253,3 +2253,23 @@ OneBot `node` 数组；**嵌套转发展开一层**（最多 2 层）；取不�
 - `quote 13 成功 / 5 失败`，且 17:21–17:22 那几次全是 `kernel hit via=bySeq` ⇒ **引用文字已经通了**
 - `forward 3 成功 / 3 失败` + `drop 3（转发卡片展开后没有可读内容）` ⇒ **聊天记录确实坏**，
   与今天的空壳修复对得上，等重启后再验一次即可定论
+
+**⊕⁸ 把"移植"这件事变成可查证的三步，并给出可/不可移植的证据表（2026-11-02 傍晚）**
+
+主人的想法是"NapCat 能用的功能直接移植到 Waylay"。方向对，但要先分清两种东西：
+
+- **内核能给的**（消息、历史、图片缓存 —— 本地就有）：移植是几行代码，已经在做且做完了；
+- **要服务端算的**（群文件下载链接、群精华、群荣誉）：NapCat 走的是 **packet 协议层**
+  （`core.apis.WebApi` / `PacketApi`），Waylay **没有这一层**。本机 104 个 wrapper 类里
+  没有 `WebService` / `PacketApi`，`NodeIKernelGroupService`（242 个方法）里也没有
+  `getGroupFileUrl` / `getEssence*` / `getHonor*`。⇒ 不是抄不抄的问题，是"要先把那层造出来"。
+
+新增 `tools/napcat-ref.mjs`：给一个 action 名，打印 NapCat 的实现片段（只读它的 bundle，
+看**调了哪个内核方法、实参怎么排**）。这样"移植"从"凭印象"变成三步：
+看实现 → 看依赖 → 拿本机 `__introspect` 的方法表核对。**第 3 步不过就别写**。
+
+`docs/WAYLAY-PORTING.md` 记了完整结论和判断标准：
+**数据在本地就有 ⇒ 走内核、能移植；要服务端算 ⇒ 必须有 packet 层。**
+
+另：`download_file` 在 NapCat 里其实是纯 HTTP（跟内核无关），能写但没意义 ——
+桥自己就会下载，实现了也是死代码，所以不做。

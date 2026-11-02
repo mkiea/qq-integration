@@ -247,6 +247,18 @@ check('收到入群请求事件', events.request.length === 1 && events.request[
   check('B ★ 不带 peer 时帧里没有 _peer', !Object.prototype.hasOwnProperty.call(frames.at(-1)?.params ?? {}, '_peer'),
     JSON.stringify(frames.at(-1)?.params))
   check('B 没有多发出一帧（总共 3 次调用）', frames.length === before + 3, `${frames.length - before}`)
+
+  /**
+   * seq 也要带下去（2026-11-02 早）：实测被引用消息的 `sourceMsgIdInRecords` **不是 msgId**
+   * （拿真 msgId 查内核能取到，拿它查永远空且 result:0 不报错），按 seq 取是另一条路。
+   * 反向对照：没有 seq 时不许塞 `seq: ""` —— 空串会被后端当成"有个 seq 0"去查。
+   */
+  await server.getMsg(socket, '7703053729802896443', { messageType: 'private', targetId: 1001, seq: '438' })
+  check('★ 带 seq 时帧里有 _peer.seq', frames.at(-1)?.params?._peer?.seq === '438', JSON.stringify(frames.at(-1)?.params?._peer))
+
+  await server.getMsg(socket, '7703053729802896443', { messageType: 'private', targetId: 1001 })
+  check('★ 没有 seq 时帧里没有 seq 字段',
+    !Object.prototype.hasOwnProperty.call(frames.at(-1)?.params?._peer ?? {}, 'seq'), JSON.stringify(frames.at(-1)?.params?._peer))
 }
 
 client.close()

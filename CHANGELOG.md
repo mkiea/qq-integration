@@ -2094,3 +2094,34 @@ Waylay 现在把它塞进 reply 段的 `data.text`，桥在取不到原文时直
 
 `quote-fallback-unit` 16 → **19**（E 组：用预览、明说是预览、有预览时不再塞"最近几句"；
 旧版 16 通 3 红）。
+
+**⊕⊕ 昨晚 01:33 的实测把方向纠正了一次：`sourceMsgIdInRecords` **不是** msgId（2026-11-02 早）**
+
+日志（01:33、01:35 两次引用）：
+
+```
+[reply-element] {"sourceMsgIdInRecords":"7703381295221301308","replayMsgSeq":"438","sourceMsgText":"" …}
+[get_msg] kernel miss id=7703381295221301308 peer=u_IIms…FBA result=0 errMsg="" keys=result,errMsg,msgList
+```
+
+三件事同时确定：
+
+1. **uid 翻译生效了**（`peer=u_IIms…FBA`），所以 uid/uin 那个坑已经修好；
+2. 但**仍然 `msgList` 空**，而且 `result:0, errMsg:""` —— 又一次静默失败；
+3. 对照昨晚手工探测：用**真 msgId**（`onRecvMsg` 里那条）调 `getMsgsByMsgId` 能取到 1 条。
+   ⇒ **`sourceMsgIdInRecords` 与 `msgId` 是两套 id**。之前"reply 段给的是真 msgId"这个假设错了。
+4. 顺带否掉一条捷径：`sourceMsgText` 实测是空串（`""`），预览那条路指望不上。
+
+### 改法：三条只读策略依次试，并把"哪条成功"打进日志
+
+`get_msg` 不再只试一条：`byMsgId` →（有 seq 时）`bySeq`（`getMsgsBySeqAndCount`）→ `singleMsg`。
+全是只读查询，失败只是返回空，不写任何东西。命中会打 `kernel hit via=bySeq …`，
+全空会打 `三条策略全空 … seq=…` —— 下一次就能从日志读出哪条路可用，而不是再猜一轮。
+
+配套：`reply` 段把 `replayMsgSeq` / `replayMsgRootMsgId` 一起给出去，桥把它们传进 `_peer`。
+`__msgcall` 现在支持批量（`{"calls":[{...},{...}]}`），一次 QQ 消息能试完一组签名。
+
+### 测试 `onebot-api-unit` 67 → 69
+
+带 seq 时 `_peer.seq` 必须出现；**没有 seq 时不许塞 `seq: ""`**（空串会被后端当成"有个 seq 0"去查）。
+另外用桩验证了策略链：`byMsgId` 空 ⇒ 自动落到 `bySeq` 并成功取回，日志出现 `via=bySeq`。

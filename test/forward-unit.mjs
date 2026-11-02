@@ -231,5 +231,67 @@ check('端到端首行', e2eText.text.split('\n')[0] === '[转发聊天记录 �
 check('端到端正文', e2eText.text.includes('小明: 今晚开黑吗 [图片]') && e2eText.text.includes('小红: @小明 来'), e2eText.text)
 check('端到端 chars/used/total', e2eText.chars === e2eText.text.length && e2eText.used === 2 && e2eText.total === 2)
 
+// —— 2026-11-02 深夜：真实机的三个"看不见" ——
+// ① 转发里套转发：后端已经展开（getMultiMsg 能拿到 10 条），但排版层原来只写 [转发记录]，
+//    内层内容在模型眼里等于不存在。
+// ② 转发里的卡片：原来 json 段命中 default '' ⇒ **整张卡凭空消失**（不是一个字，是零个字）。
+// ③ 纯图片的节点：能被排版跳过的话，用户看到的"转发的图没有"就有一半是排版丢的。
+{
+  const nested = normalizeForwardNodes({
+    messages: [
+      {
+        type: 'node',
+        data: {
+          name: '乙',
+          content: [{
+            type: 'forward',
+            data: {
+              id: 'R1',
+              msg_id: 'M1',
+              content: [{ type: 'node', data: { name: '丙', content: [{ type: 'text', data: { text: '内层的话' } }] } }],
+            },
+          }],
+        },
+      },
+    ],
+  })
+  const text = formatForwardTranscript(nested.nodes).text
+  check('★内嵌聊天记录会内联展开（不是只写 [转发记录]）', text.includes('内层的话') && text.includes('内嵌聊天记录'), text)
+  check('内嵌内容带发言人名字', text.includes('丙：'), text)
+
+  // 没有 content 的内嵌段：老实写 [转发记录]，不许编
+  const noContent = normalizeForwardNodes({ messages: [{ type: 'node', data: { name: 'X', content: [{ type: 'forward', data: { id: 'R2' } }] } }] })
+  check('内嵌拿不到内容时写 [转发记录]（不编）', formatForwardTranscript(noContent.nodes).text.includes('[转发记录]'), formatForwardTranscript(noContent.nodes).text)
+
+  // 三层以上：只到 2 层，再深就退化成 [转发记录]（防炸栈）
+  const deep = { type: 'node', data: { name: 'L0', content: [{ type: 'forward', data: { content: [{ type: 'node', data: { name: 'L1', content: [{ type: 'forward', data: { content: [{ type: 'node', data: { name: 'L2', content: [{ type: 'forward', data: { content: [{ type: 'node', data: { name: 'L3', content: [{ type: 'text', data: { text: '最里层' } }] } }] } }] } }] } }] } }] } }] } }
+  const deepText = formatForwardTranscript(normalizeForwardNodes({ messages: [deep] }).nodes).text
+  check('★内嵌限 2 层：更深的内容不展开（防炸栈），但不是空', deepText.includes('L1') && !deepText.includes('最里层'), deepText.slice(0, 120))
+
+  const withCard = normalizeForwardNodes({
+    messages: [{
+      type: 'node',
+      data: {
+        name: '甲',
+        content: [{
+          type: 'json',
+          data: { data: JSON.stringify({ app: 'com.tencent.tuwen.lua', prompt: '[分享]某条动态', meta: { detail_1: { title: '标题甲', desc: '3 人点赞', qqdocurl: 'https://example.com/p/1' } } }) },
+        }],
+      },
+    }],
+  })
+  const cardText = formatForwardTranscript(withCard.nodes).text
+  check('★转发里的卡片不再消失', cardText.includes('某条动态'), cardText)
+  check('★转发里的卡片带出链接', cardText.includes('https://example.com/p/1'), cardText)
+
+  const brokenCard = normalizeForwardNodes({ messages: [{ type: 'node', data: { name: '甲', content: [{ type: 'json', data: { data: '{坏 JSON' } }] } }] })
+  check('转发里的坏 JSON 降级成 [卡片]（不抛错、不丢整条）', formatForwardTranscript(brokenCard.nodes).text.includes('[卡片]'), formatForwardTranscript(brokenCard.nodes).text)
+
+  const imageOnly = normalizeForwardNodes({ messages: [{ type: 'node', data: { name: '丁', content: [{ type: 'image', data: { url: 'http://127.0.0.1:6701/file/a.png' } }] } }] })
+  const imageOnlyText = formatForwardTranscript(imageOnly.nodes).text
+  check('纯图片节点不会被排版丢掉', imageOnlyText.includes('[图片]'), imageOnlyText)
+  check('纯图片节点的图片被收集（供桥下载）', imageOnly.nodes[0].images.length === 1, JSON.stringify(imageOnly.nodes[0].images))
+}
+
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exit(failed > 0 ? 1 : 0)

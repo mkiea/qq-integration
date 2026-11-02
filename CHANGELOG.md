@@ -2391,3 +2391,34 @@ fork 只在"原会话被网页端占着写锁超过 `ownedForkAfterMs`"时试一
 
 g_tk 与独立实现对照｜**URL 必须带 `%27` 且 u1 指向 h5.qzone**｜换票失败要抛错并点名缺什么
 ｜发布剥壳、`code≠0` 带 code/message｜**非 JSON 响应说"看不懂"，不假装成功**。
+
+**⊕¹³ bridge 拆解第一步 + 为什么"搬 NapCat 模块"做不到（2026-11-02 晚）**
+
+主人两条意见：① NapCat 就在本机，要哪个模块直接拿给 Waylay 装上；② bridge 太大，快成上帝文件了。
+
+### ① 不能"拿模块"
+
+- NapCat 是**一个 3MB 的编译产物** `napcat.mjs`，不是可拆的模块树：里面所有标识符都被压缩重命名
+  （`ze` / `Mt` / `Wg`），没有 `qzone.js` 这种东西可以整块拎出来。
+- 它的 qzone 代码依赖自己的三层：`core.apis.WebApi`（packet）、`Mt.HttpsCookies`（http）、`core.selfInfo`。
+  搬一个文件等于搬它那套框架。
+- 许可是明确的：NapCat 不允许未授权二次开发，而仓库要公开 —— 拷代码进去正是不能做的那个方向。
+
+**但"拿知识"是可行的，而且今天四次都是这么解决的**：`bySeq` 的 5 个参数、转发段的 `resId`、
+换票 URL 里的 `keyindex=19%27`、以及"群文件/精华/荣誉依赖 packet 层所以移植不了"这个判断。
+知识搬过来了，代码一行没搬 —— 于是说说能发了，而仓库干净。
+
+### ② bridge 拆解：先搬最安全的一块
+
+`lib/bridge.js` **12,519 行 / 308 个方法**（搬前 12,669）。已搬出：
+`!probe` / `!sessions` / `!qa` 三条只读指令 → `lib/admin-extras.js`（166 行）。
+
+模式是：模块导出 `handleAdminExtra(input, deps)`，**返回 `null` 表示"不管这条"**，
+bridge 那边只剩一行调用。这样搬运期一旦红了，能立刻分清是新模块还是老逻辑。
+验收：probe-unit 15 / sessions-admin-unit 11 / qa-admin-unit 8 全绿（搬完第一次跑就红了 1 条，
+原因是 `dataRoot` 是桥的字段、不在 deps 里 —— 正好证明"私有成员出不去"这条约束是真的）。
+
+`docs/BRIDGE-DECOMPOSITION.md` 记了完整顺序（按依赖薄厚排）与三条原则：
+**先有特征测试再动刀**｜**机械搬迁不改逻辑**｜**私有成员必须显式传依赖，不许改可见性**。
+最危险的 `#onQqMessageInner`（989 行）明确标注"不要轻易开始"——
+它的错误会表现为"她说话怪了"，单测看不出来，得先把真实入站帧做成 golden 测试。

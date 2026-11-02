@@ -2273,3 +2273,27 @@ OneBot `node` 数组；**嵌套转发展开一层**（最多 2 层）；取不�
 
 另：`download_file` 在 NapCat 里其实是纯 HTTP（跟内核无关），能写但没意义 ——
 桥自己就会下载，实现了也是死代码，所以不做。
+
+**⊕⁹ 写操作盘点：说说其实走 HTTP（有救）、资料修改已移植（2026-11-02 傍晚）**
+
+主人说"主要是发说说之类的、控制 QQ 之类的，名称之类的没啥用"。所以把**写**这一侧单独看了一遍。
+
+**说说：一直以为要 packet 层，读 NapCat 之后结论相反** —— 它是纯 HTTP：
+
+```
+POST https://user.qzone.qq.com/proxy/domain/taotao.qzone.qq.com/cgi-bin/emotion_cgi_publish_v6?g_tk=…
+POST https://up.qzone.qq.com/cgi-bin/upload/cgi_upload_image?g_tk=…      （图）
+鉴权：uin + g_tk(由 skey 算) + cookie(p_uin/p_skey/skey)
+```
+
+⇒ **卡点只剩"skey/pskey 从哪来"**。pskey 有线索（`NodeIKernelTipOffService.getPskey`、
+`GuildService.fetchPskey`），skey 还没定位。这不是 packet 层问题，是"找个内核方法"的问题。
+
+为此把 `__msgcall` 扩成**能调任意内核服务**（加 `service` 参数），重启一次之后可以反复探，
+不用每个假设都改代码重启 QQ。
+
+**资料：** `set_qq_profile` 从 `async () => null`（静默不做）改成真调
+`ProfileService.modifySelfProfile({nick, longNick})`，只传调用方给的字段 ——
+不猜 sex/birthday（NapCat 从当前资料补齐，我们读不到；传错比不传更糟）。
+
+**群管理**这条 Waylay 本来就是真的（禁言/踢/管理员/群名片/群名），可以直接验收。

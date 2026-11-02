@@ -2359,3 +2359,35 @@ fork 只在"原会话被网页端占着写锁超过 `ownedForkAfterMs`"时试一
 **代理没开必须报 ❌ 并提示 `ONEBOT_WS_PORT`**。
 （写测试时踩了一次：测试用户不在 `allowUsers` 里，消息根本没进管理员分支 —— 回执是空的，
 八条断言全红。白名单和 adminUsers 是两个门，缺一个都进不来。）
+
+**⊕¹² 说说做出来了：换票走内核、发布走 HTTP（2026-11-02 晚）**
+
+上一版结论是"Waylay 上做不成"，**那个结论错了**——错在换票 URL 的形状。
+读 NapCat 时漏了两个细节，补上之后一次就通：
+
+| 细节 | 少了它会怎样 |
+|---|---|
+| `u1` 必须是 `https://h5.qzone.qq.com/qqnt/qzoneinpcqq/friend?...` | 换成 `user.qzone.qq.com/.../infocenter` 只回 `pt_qlogincode=5` |
+| `keyindex=19%27` 末尾那个 **`%27`** | 去掉就退化成"未登录"，拿不到 skey |
+
+补齐后换到了完整 cookie（`skey` / `p_skey` / `p_uin` / `pt4_token` …），
+用 `g_tk=hash33(p_skey)` 去读自己的说说列表，返回 `code:0`、`logininfo.name` 正确 —— 票是真的。
+
+### 落地（`lib/qzone.js`，无第三方依赖）
+
+- `auth(uin)`：内核 `TicketService.forceFetchClientKey("")` → 换票 URL → 解析 Set-Cookie
+- `publish(text, {uin, ugcRight})`：POST `emotion_cgi_publish_v6`，剥 `_Callback(...)` 壳
+- 跟跳转自己实现（skey 常在**中间那一跳**的 Set-Cookie 上，只读第一跳会漏）
+
+两个出口统一到 `#publishMoment`：管理员 `!moment`、她自己的主动通道。
+原来那道"后端回 1404 就不再试"的短路**已删除**（现在不依赖那条 action）。
+
+### 安全阀
+
+`!moment --private 正文` → `ugc_right=64`（仅自己可见）。第一次验证用这个，
+免得一句"测试"直接出现在好友的时间线上。
+
+### 测试 `qzone-unit`：20 条
+
+g_tk 与独立实现对照｜**URL 必须带 `%27` 且 u1 指向 h5.qzone**｜换票失败要抛错并点名缺什么
+｜发布剥壳、`code≠0` 带 code/message｜**非 JSON 响应说"看不懂"，不假装成功**。

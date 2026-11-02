@@ -233,5 +233,31 @@ check('E extractJson 空串返回 null', extractJson('') === null)
   check('G ★ 传图失败时要抛错并带 code/message', /传图失败/.test(String(error?.message ?? '')) && /-100/.test(String(error?.message ?? '')), String(error?.message ?? ''))
 }
 
+
+
+// ---------- H. 说说正文里的 [img:名字] 标记（2026-11-02 夜） ----------
+import { splitMomentMarkers, proactiveMomentPrompt } from '../lib/bridge.js'
+{
+  const one = splitMomentMarkers('今天不想说话 [img:贴-委屈]')
+  check('H 剥掉标记，正文干净', one.text === '今天不想说话', JSON.stringify(one))
+  check('H 收到一个表情名', one.stickers.length === 1 && one.stickers[0] === '贴-委屈', JSON.stringify(one.stickers))
+
+  const face = splitMomentMarkers('哼 [face:贴-盯] 不理你了')
+  check('H [face:x] 也一并丢掉（Qzone 里没有黄脸的位置）', !/\[face/.test(face.text) && face.stickers.length === 0, JSON.stringify(face))
+
+  const onlyMarker = splitMomentMarkers('[img:贴-乖笑]')
+  check('H ★ 只有标记时不许把正文变成空（退回原文）', onlyMarker.text === '[img:贴-乖笑]', JSON.stringify(onlyMarker))
+
+  const many = splitMomentMarkers('a [img:一] b [img:二]')
+  check('H 多个标记都收下来（调用方只取第一张）', many.stickers.length === 2, JSON.stringify(many.stickers))
+}
+
+{
+  const withStickers = proactiveMomentPrompt(new Date('2026-11-02T20:00:00'), ['贴-乖笑'])
+  check('H 旁白在有表情时提示写法与可用清单', /\[img:名字\]/.test(withStickers) && /贴-乖笑/.test(withStickers), withStickers.split('\n').pop())
+  const without = proactiveMomentPrompt(new Date('2026-11-02T20:00:00'), [])
+  check('H 旁白在没有表情时不提配图（别让她写一个不存在的名字）', !/\[img:/.test(without), without.split('\n').pop())
+}
+
 console.log(`\n${passed} passed, ${failed} failed`)
 if (failed > 0) process.exitCode = 1

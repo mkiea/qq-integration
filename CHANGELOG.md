@@ -2181,3 +2181,31 @@ cache → byMsgId → bySeq(5参) → bySeq3 → singleMsg → historyScan
 ### 生效
 
 Waylay 补丁要**重启 QQ**；桥的 `_peer.seq` 要**重启宿主**。
+
+**⊕⁵ 引用修好了：文字到手，图片卡在 rkey（2026-11-02 17:10 真机 + 当天下午修）**
+
+先记一段**成功证据**（这条链路第一次跑通）：
+
+```
+[get_msg] kernel hit via=bySeq id=… segments=2
+quote resolve: id=… got=msg segments=2 types=["text","image"]
+quote image download failed: download HTTP 400（invalid rkey -5503010）
+```
+
+`seq` 一传下去，`bySeq` 就命中了 —— 前面所有失败都源于两件事：宿主没重启（seq 没传）、
+以及 id 语义猜错。文字部分她已经能看到。
+
+剩下的是图片。根因不在我们的代码：`adapter.js` 里图片本地代理只在
+`ONEBOT_WS_PORT != 0` 时启用，而 `rin-launch.bat` 写的是 `=0` ⇒ **代理从来没开过**，
+图片 URL 一直是带 rkey 的 CDN 直链，引用旧图必然 400。
+
+两处改动：
+
+1. `rin-launch.bat`：`ONEBOT_WS_PORT=6701`、`ONEBOT_WS_HOST=127.0.0.1`
+   ⇒ 图片 URL 改为 `http://127.0.0.1:6701/file/<md5>.<ext>`，本地取，不会过期。
+2. `actions.js` 新增 `registerImagesOf()`：`events.js` 只在**新收到**图片时登记代理缓存，
+   而引用/历史里的图是从内核查回来的、没登记 ⇒ 代理 404。
+   现在 `get_msg` 命中和 `get_*_msg_history` 都会先登记一次。
+
+边界：QQ 本地没有缓存文件的图（很早、已清理）仍然取不到，会如实说"引用了 1 张图片（下载失败）"，
+不编内容。生效：**重启 QQ**（改的是启动脚本的 env + waylay-src），宿主不用动。

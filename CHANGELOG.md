@@ -2152,3 +2152,32 @@ Waylay 上游一次都没调过，这就是差距的根源。
 
 现在顺序：`byMsgId` → `bySeq`（5 参）→ `bySeq3`（3 参兜底）→ `singleMsg`，
 命中打 `kernel hit via=…`。桩测已验证：byMsgId 空 ⇒ bySeq(5 参) 命中。
+
+**⊕⊕⊕⊕ 反哺 NapCat：把"历史消息"搬进 Waylay（2026-11-02 中午）**
+
+先回答"上游更新没"：**没有**。`Micuks/waylay-qq-bridge` 最新提交 `2026-07-15`，
+`master` 顶格 0.4.3，与本地副本同版 —— 引用这块上游从没实现过。
+
+### 修掉两个"撒谎"的空壳
+
+`get_friend_msg_history` / `get_group_msg_history` 原来都是 `=> ({ messages: [] })`，
+等于告诉上层"这个会话没有历史"。现在真的去取：给了 `message_seq` 用
+`getMsgsBySeqAndCount(peer, String(seq), count, true, true)`；没给用
+`getAioFirstViewLatestMsgs(peer, count)`。
+
+⚠️ **NapCat 用的 `getMsgHistory` 在本机 QQ 3.2.31 里不存在**（introspect 实查）。
+所以这是"按本机能力适配"，不是照抄 —— 反哺时把不存在的接口搬过来只会得到一个新的静默失败。
+
+### `get_msg` 多了最后一招：按 seq 在最新 50 条里比对
+
+```
+cache → byMsgId → bySeq(5参) → bySeq3 → singleMsg → historyScan
+```
+
+`historyScan` 不依赖任何 id 语义（前几轮全空的根源就是 id 语义猜错），
+只用回复元素里的 `seq` —— 也就是 QQ 自己用来显示"回复 #438"的那个字段。
+桩测：前四条全空 ⇒ `historyScan` 命中，日志 `kernel hit via=historyScan`。
+
+### 生效
+
+Waylay 补丁要**重启 QQ**；桥的 `_peer.seq` 要**重启宿主**。

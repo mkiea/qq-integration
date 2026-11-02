@@ -126,6 +126,15 @@ async function main() {
     world.stop()
   }
 
+  // ---- D. --sticker：只认表情库，且要给出可用清单 ----
+  {
+    const cwd = mkdtempSync(join(root, 'd-'))
+    const world = makeBridge(cwd)
+    const reply = await say(world, '!moment --sticker 不存在的表情 随便说点什么')
+    check('D ★ 表情库没有时如实报，并列出可用清单', /表情库里没有/.test(reply), reply.slice(0, 140))
+    check('D 不再把 --sticker 留在正文里', !/--sticker/.test(reply), reply.slice(0, 160))
+    world.stop()
+  }
   console.log(`\n${passed} passed, ${failed} failed`)
   if (failed > 0) process.exitCode = 1
 }

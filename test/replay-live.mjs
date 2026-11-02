@@ -73,7 +73,9 @@ const report = await replayer.run({
   // 线上运行时快照里的决策配置：白名单为空会拒绝一切，所以回放必须带上它
   hints: { botQq: BOT, allowGroups: [GROUP], allowUsers: [USER], quietHours: [], keywordEnabled: true },
   // 关键词默认关闭、安静时段默认 9:00-12:00/14:00-18:00：回放里当成"试配置"打开/关掉
-  overrides: { keywordEnabled: true, quietHours: [] },
+  // ⚠️ `funEnabled` 是**总闸**，默认 false —— 只开 `diceEnabled` 不够，骰子照样不答。
+  // 这里不补这一行，`/r 3d6` 会掉到模型分支（回放里是桩），表现为"能回复但不是骰子结果"。
+  overrides: { keywordEnabled: true, funEnabled: true, quietHours: [] },
   maxEntries: 10,
 })
 const portAfter = listenersOn(6700)

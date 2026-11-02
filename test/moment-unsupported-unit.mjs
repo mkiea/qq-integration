@@ -11,10 +11,20 @@
  *   · 网络抖动 / DLP 拦下 / 正文为空 = **这一轮没成** ⇒ 下轮照常再试
  * 混为一谈就会因为一次偶发超时把说说永久关掉。
  *
- *   A 1404 ⇒ 记住"不支持"
+ *   A 1404 ⇒ 记住"后端不支持"（主动通道据此不再白烧一轮）
  *   B **别的错误（网络）⇒ 不许记成不支持**（这是 B 存在的唯一理由）
- *   C 已记下之后，`/moment` 直接给出理由，且**不再调用那个必然失败的 API**
+ *   C **`!moment` 不许因为上次失败就永久停用**（2026-11-02 改的语义，见下）
  *   D 说话本身不受影响（停用说说不能连累正常聊天）
+ *
+ * ⚠️ C 组 2026-11-02 深夜**被反过来重写**了。原来的断言是"第二次不再调 API"——
+ * 那对应的是"探到 1404 就再也不试"的短路。改走 `lib/qzone.js` 之后，发布是普通 HTTP，
+ * 失败多半是网络/风控/票据这类**会自愈**的原因，永久停用反而是 bug。所以现在钉的是
+ * **"第二次照常重试"**。短路的判断权收窄到只影响主动通道（`#noteMomentsUnsupported`）。
+ *
+ * 桩也跟着换了：发布不再走 `send_qzone_msg`，第一步是 `__msgcall` 换票
+ * （`TicketService.forceFetchClientKey`）。旧桩打在一个已经不存在的 action 上，
+ * 于是回执里全是 `this.server.callAction is not a function` —— 测试红了两天没人管，
+ * 原因就是"红得不像断言失败，像环境坏了"。
  */
 import { EventEmitter } from 'node:events'
 import { appendFileSync, existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs'
@@ -46,10 +56,15 @@ class MockServer extends EventEmitter {
     this.sent.push(segments)
     return { message_id: 1 }
   }
-  async sendQzoneMsg() {
+  /**
+   * 发布链路的第一步就是它：`#qzoneClientKey` → `__msgcall` / `TicketService.forceFetchClientKey`。
+   * 这里让它**必定抛错**（A/B/C/D 四个用例都会设 `momentError`），
+   * 所以不会真的走到后面的 HTTP 发布去（单元测试不许碰网络）。
+   */
+  async callAction(bot, action, params) {
     this.momentCalls += 1
     if (this.momentError) throw this.momentError
-    return { tid: 'tid-1' }
+    return { raw: { clientKey: 'CK-FAKE-FOR-TEST' } }
   }
   async getStatus() { return { online: true, good: true } }
 }
@@ -122,7 +137,7 @@ async function adminCmd(world, spec) {
   try { return JSON.parse(last) } catch { return {} }
 }
 
-const MOMENT_1404 = new Error('OneBot action send_qzone_msg failed: {"status":"failed","retcode":1404,"msg":"不支持的 API","data":null}')
+const MOMENT_1404 = new Error('__msgcall failed: {"status":"failed","retcode":1404,"msg":"不支持的 API","data":null}')
 
 // ---------- A. 1404 ⇒ 记成"不支持" ----------
 {
@@ -141,14 +156,14 @@ const MOMENT_1404 = new Error('OneBot action send_qzone_msg failed: {"status":"f
 {
   const cwd = mkdtempSync(join(root, 'b-'))
   const world = makeBridge({ cwd })
-  world.server.momentError = new Error('OneBot action send_qzone_msg timed out')
+  world.server.momentError = new Error('__msgcall timed out after 10s')
   await adminCmd(world, { cmd: 'moment', text: '测试一下' })
   check('B ★ 网络超时**没有**被误判成不支持', world.bridge.momentsUnsupported == null,
     JSON.stringify(world.bridge.momentsUnsupported))
   world.bridge.stop()
 }
 
-// ---------- C. 已记下之后不再白打一次 API ----------
+// ---------- C. `!moment` 不许因上次失败就永久停用（2026-11-02 改的语义）----------
 {
   const cwd = mkdtempSync(join(root, 'c-'))
   const world = makeBridge({ cwd })
@@ -156,8 +171,12 @@ const MOMENT_1404 = new Error('OneBot action send_qzone_msg failed: {"status":"f
   await adminCmd(world, { cmd: 'moment', text: '第一次' })
   const afterFirst = world.server.momentCalls
   const res = await adminCmd(world, { cmd: 'moment', text: '第二次' })
-  check('C ★ 第二次没有再调用 API', world.server.momentCalls === afterFirst, `calls ${afterFirst} -> ${world.server.momentCalls}`)
-  check('C 第二次直接说明了原因', /不支持|换回支持/.test(String(res.error ?? '')), JSON.stringify(String(res.error ?? '').slice(0, 90)))
+  check('C ★ 第二次照常重试（HTTP 失败会自愈，不许永久停用）',
+    world.server.momentCalls === afterFirst + 1, `calls ${afterFirst} -> ${world.server.momentCalls}`)
+  check('C 回执里带着这次的真实失败原因', /1404|不支持的 API/.test(String(res.error ?? '')),
+    JSON.stringify(String(res.error ?? '').slice(0, 90)))
+  check('C 回执里不许出现"已停用"这种不实说法', !/已停用/.test(String(res.error ?? '')),
+    JSON.stringify(String(res.error ?? '').slice(0, 90)))
   world.bridge.stop()
 }
 

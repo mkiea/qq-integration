@@ -2653,9 +2653,30 @@ format=json         qzreferrer=https://user.qzone.qq.com/<uin>/main
 
 ### 顺带修掉：两个真实 QQ 号泄露在**公开**仓库里
 
-`privacy-unit` 一直在红（`39 passed, 1 failed`），这次查清了：`2000000001`、`3000000001`
+`privacy-unit` 一直在红（`39 passed, 1 failed`），这次查清了：两个**真实 QQ 号**（其中一个是主人自己的）
 出现在 `CHANGELOG.md` 与 4 个测试文件里，而仓库是公开的。全部换成仓库既有的占位号
 （`2000000001` / `3000000001`）⇒ `40 passed, 0 failed`。
 
+> 这段本来把两个号写在正文里"举例"，被 `privacy-unit` 当场抓回来 —— 说明那道闸是有效的。
+> 教训：**解释泄露的时候最容易再泄露一次**，写报告时也别粘原文。
+
 ⚠️ **只清了 HEAD，git 历史里还在**。要清历史得改写已推送的提交（`filter-repo` + 强推），
 那是另一个决定，没擅自动。
+
+**⊕¹⁵ 顺手把两条"红了很久"的测试弄清（2026-11-02 深夜）**
+
+跑全量时发现 115 个套件里没有统一入口，`for f in test/*.mjs` 会撞上要活宿主的套件
+**一直等到超时**（我因此被卡了 10 分钟，那一刻屏幕上一个字都没有）。补了
+`tools/test-all.mjs`（`npm run test:all`）：按名分类、逐个计时、超时按"卡死"报。
+跳过的**一定念出来** —— 静默少跑几个和全部通过，在终端上长得一模一样。
+
+| 套件 | 红的原因 | 处置 |
+|---|---|---|
+| `moment-unsupported-unit` | 桩还打在 `send_qzone_msg` 上，而 11-02 发布已改走 `__msgcall` 换票 ⇒ 回执全是 `callAction is not a function` | 桩改打新链路；**C 组语义反过来**：从"第二次不许再试"改成"第二次照常重试"（HTTP 失败会自愈，永久停用才是 bug）|
+| `replay-live` | `funEnabled` 是总闸默认 false，回放只开了 `diceEnabled` ⇒ `/r 3d6` 掉到模型桩 | 回放 overrides 补 `funEnabled: true` |
+
+`moment-unsupported` 那 4 条红了**两天**没人管，原因值得记：它红得**不像断言失败，像环境坏了**
+（错误文案是 `this.server.callAction is not a function`）。教训是当"失败原因指向框架层"时，
+先问**这个桩还在不在被测路径上**，而不是怀疑环境。
+
+结果：**104 套件全绿 / 5050 条断言**（另有 11 个要活宿主的没跑，已列出）。

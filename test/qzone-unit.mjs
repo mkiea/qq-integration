@@ -52,26 +52,55 @@ function check(name, ok, extra = '') {
   check('没有等号的坏行被跳过', !('garbage-without-equals' in jar))
 }
 
-// ---------- C. 换票失败必须抛错 ----------
+// ---------- C. 换票失败必须抛错（真机两种形态都出现过） ----------
+// 形态①：HTTP 503，Set-Cookie 里 skey/p_skey **字段都在、值是空的**（真机就是这么报的）
 {
+  let calls = 0
   const qzone = createQzone({
-    fetchClientKey: async () => 'CLIENTKEY',
-    request: async () => ({ status: 200, headers: { 'set-cookie': ['pt_qlogincode=5; Path=/'] }, body: '' }),
+    fetchClientKey: async () => "CLIENTKEY",
+    request: async () => {
+      calls += 1
+      return { status: 503, headers: { "set-cookie": ["skey=; Path=/", "p_skey=; Path=/", "uin=o1; Path=/"] }, body: "" }
+    },
   })
   let error = null
   try { await qzone.auth(1000) } catch (e) { error = e }
-  check('C ★ 没拿到 skey/p_skey 时抛错', error !== null, String(error?.message ?? '没抛错'))
-  check('C 错误里点名缺的是 skey/p_skey', /skey\/p_skey/.test(String(error?.message ?? '')), String(error?.message ?? ''))
-  check('C 错误里带上了服务端给了哪些 cookie', /pt_qlogincode/.test(String(error?.message ?? '')), String(error?.message ?? ''))
+  const message = String(error?.message ?? "")
+  check("C ★ 字段在但值为空时抛错", error !== null, message)
+  check('C 说的是「值是空的」，不是「没有字段」', /值是空的/.test(message) && !/字段都不在/.test(message), message)
+  check("C 报告了 cookie 总数（不列名字，避免自相矛盾）", /共给了 \d+ 个 cookie/.test(message), message)
+  check("C 503 时提示这是频率限制", /频率限制/.test(message), message)
+  check("C ★ 5xx 会重试（三次）", calls === 3, String(calls))
 }
 
+// 形态②：HTTP 200，但压根没有 skey/p_skey 字段
 {
-  const qzone = createQzone({ fetchClientKey: async () => '', request: async () => { throw new Error('不该发请求') } })
+  const qzone = createQzone({
+    fetchClientKey: async () => "CLIENTKEY",
+    request: async () => ({ status: 200, headers: { "set-cookie": ["pt_qlogincode=5; Path=/"] }, body: "" }),
+  })
   let error = null
   try { await qzone.auth(1000) } catch (e) { error = e }
-  check('C 后端不给 clientKey 时立刻抛错（不发请求）', error !== null && /clientKey/.test(String(error?.message ?? '')), String(error?.message ?? ''))
+  const message = String(error?.message ?? "")
+  check('C 没这个字段时说「字段都不在」', /字段都不在/.test(message), message)
+  check("C 200 不提示频率限制", !/频率限制/.test(message), message)
 }
 
+// 形态③：先 503（空值），重试后成功 —— 这是真机上最可能发生的情形
+{
+  let calls = 0
+  const qzone = createQzone({
+    fetchClientKey: async () => "CLIENTKEY",
+    request: async () => {
+      calls += 1
+      if (calls === 1) return { status: 503, headers: { "set-cookie": ["skey=; Path=/", "p_skey=; Path=/"] }, body: "" }
+      return { status: 200, headers: { "set-cookie": ["skey=SK2; Path=/", "p_skey=PSK2; Path=/"] }, body: "" }
+    },
+  })
+  const ticket = await qzone.auth(1000)
+  check("C ★ 重试一次后就成功拿到票", ticket.skey === "SK2" && ticket.pskey === "PSK2", JSON.stringify(ticket))
+  check("C 恰好重试了一次", calls === 2, String(calls))
+}
 // ---------- D/E. 发布 ----------
 {
   const seen = []
@@ -119,6 +148,27 @@ function check(name, ok, extra = '') {
 
 check('E extractJson 能从 _Callback(...) 里取出对象', extractJson('_Callback({"code":0})')?.code === 0)
 check('E extractJson 空串返回 null', extractJson('') === null)
+
+// ---------- F. 票据缓存：少打换票接口（它对频率敏感，真机第一次就 503） ----------
+{
+  let calls = 0
+  let clock = 1_000_000
+  const qzone = createQzone({
+    fetchClientKey: async () => 'CK',
+    now: () => clock,
+    ticketTtlMs: 60_000,
+    request: async () => {
+      calls += 1
+      return { status: 200, headers: { 'set-cookie': ['skey=S; Path=/', 'p_skey=P; Path=/'] }, body: '' }
+    },
+  })
+  await qzone.auth(1)
+  await qzone.auth(1)
+  check('F 同一张票在 TTL 内只换一次（两次调用只打一次网络）', calls === 1, String(calls))
+  clock += 61_000
+  await qzone.auth(1)
+  check('F 过了 TTL 会重新换票', calls === 2, String(calls))
+}
 
 console.log(`\n${passed} passed, ${failed} failed`)
 if (failed > 0) process.exitCode = 1

@@ -4,6 +4,7 @@
  * the panel gets pass/fail plus a concrete next step for each item.
  */
 import { existsSync, readFileSync, statSync } from 'node:fs'
+import { dirname, join } from 'node:path'
 
 const MINUTE = 60_000
 
@@ -79,6 +80,33 @@ export function runDiagnose({ config, snapshot, runtime, events = [], now = Date
   checks.push(item('runtime', '桥的运行快照新鲜', runtimeFresh,
     runtime ? `更新于 ${Math.round((now - runtime.updatedAt) / 1000)}s 前，版本 ${runtime.version}，会话 ${runtime.sessionCount}` : `读不到 ${runtimeFile}`,
     runtimeHint, 'warn'))
+  /**
+   * 宿主 / 模型 API 健康（2026-11-03，DeepSeek 事故那天加）。
+   *
+   * 那次事故的表现是"她沉默"：API 报错或卡死，桥只能掐断，用户看不到任何原因。
+   * 桥现在把每一回合的结果落盘成 `qq-host-health.json`，这里把它变成体检的一项：
+   * **15 分钟内有异常 = 正在炸**（红），更早 = 已恢复（绿，附上次时间）。
+   * 15 分钟这个界不是随手取的：桥的看门狗 5 分钟才掐，连着两轮失败就该红。
+   */
+  try {
+    const healthFile = config?.logs?.runtime ? join(dirname(config.logs.runtime), 'qq-host-health.json') : ''
+    if (healthFile !== '' && exists(healthFile)) {
+      const hh = JSON.parse(String(readFile(healthFile) ?? '{}')) || {}
+      const issueAgeMin = hh.lastIssueAt ? Math.round((now - Number(hh.lastIssueAt)) / MINUTE) : null
+      const burning = issueAgeMin !== null && issueAgeMin < 15
+      const times = Number(hh.consecutiveFailures) || 0
+      const why = String(hh.lastIssueReason ?? '').slice(0, 80)
+      checks.push(item('host-health', '宿主 / 模型 API 健康', !burning,
+        burning
+          ? `${issueAgeMin} 分钟前报错${times > 1 ? `（连续 ${times} 次）` : ''}：${why}`
+          : (issueAgeMin === null ? '无异常记录' : `上次异常 ${issueAgeMin} 分钟前，之后一直正常`),
+        '上游 API 挂了就等它恢复（可查 status.deepseek.com）；如果是"慢"不是"挂"，把 hostStuckAbortMs 调大'))
+    } else {
+      checks.push(item('host-health', '宿主 / 模型 API 健康', true, '无记录（桥还没跑过，或版本较旧）'))
+    }
+  } catch {
+    checks.push(item('host-health', '宿主 / 模型 API 健康', true, '健康文件读不出来（按正常处理）'))
+  }
   if (runtime) {
     const sessions = runtime.sessions ?? []
     checks.push(item('sessions', '会话映射', true, `${sessions.length} 个会话${sessions.length ? `（最近：${sessions[0].chatKey} ${sessions[0].resumed ? '续接' : '新建'}）` : ''}`, ''))

@@ -1298,7 +1298,8 @@ function paintMetrics(status, perf) {
     const issueAgeMin = hh.lastIssueAt ? Math.round((Date.now() - hh.lastIssueAt) / 60000) : null
     const burning = issueAgeMin !== null && issueAgeMin < 15
     if (burning) {
-      set('mHost', '异常', `约 ${issueAgeMin} 分钟前 · ${String(hh.lastIssueReason ?? '').slice(0, 40)}`, 'bad')
+      const times = Number(hh.consecutiveFailures) > 1 ? `连续 ${hh.consecutiveFailures} 次 · ` : ''
+      set('mHost', '异常', `${times}约 ${issueAgeMin} 分钟前 · ${String(hh.lastIssueReason ?? '').slice(0, 36)}`, 'bad')
     } else if (issueAgeMin !== null) {
       set('mHost', '正常', `上次异常 ${issueAgeMin >= 1440 ? Math.round(issueAgeMin / 1440) + ' 天' : issueAgeMin + ' 分钟'}前`, 'good')
     } else {

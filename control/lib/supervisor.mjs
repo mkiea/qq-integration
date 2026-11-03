@@ -406,6 +406,7 @@ export function createSupervisor(config, deps = {}) {
         lastIssueKind: String(data.lastIssueKind ?? ''),
         lastIssueReason: String(data.lastIssueReason ?? '').slice(0, 200),
         lastOkAt: Number(data.lastOkAt) || 0,
+        consecutiveFailures: Number(data.consecutiveFailures) || 0,
         ageSeconds: data.lastIssueAt ? Math.round((now() - Number(data.lastIssueAt)) / 1000) : null,
       }
     } catch { return null }

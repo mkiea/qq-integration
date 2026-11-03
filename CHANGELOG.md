@@ -2880,3 +2880,46 @@ downloadType, filePath }])`，拿回调里的 `filePath`。
 任何一步失败都退回老行为（首帧），不让整条消息变哑。
 
 实测（本机 10 帧 / 8fps 的测试动图）：抽 3 帧 ✅、拼图 360×60 ✅、缩放命令不报错 ✅。
+
+**⊕²¹ 转发图第三轮：路径是相对路径 ⇒ 必须用回调拿绝对路径（2026-11-03 上午）**
+
+上一轮加了下载，日志给了关键一行：
+
+```
+[img-dl] 超时未落地 md5=a79927d8 wait=6000ms path=Ori\a79927d8976eee0f6cb97cd0c4c2ec41.png
+```
+
+`path=Ori\xxx.png` —— **`getRichMediaFilePathForGuild` 在本机内核上返回的是相对路径**。
+拿它 `fs.existsSync` 永远 false；更要命的是把它当 `filePath` 传给 `downloadRichMedia`，
+内核会按"相对当前工作目录"去落盘 —— 文件存到别处，我们等的地方永远空。
+
+### 抄 NapCat 的三个细节（这次全对上了）
+
+翻 NapCat 的调用点，`downloadMedia(msgId, chatType, peerUid, elementId, "", "", timeout, force)`
+——**第 5 个参数（filePath）传的是空串**，全部调用点都是。然后靠
+`callNormalEventV2("…/downloadRichMedia", "…/onRichMediaDownloadComplete", …)`
+拿到回调里的 `filePath`（那才是绝对路径），并且匹配口径是 `msgElementId + msgId`。
+
+所以三处一起改：
+
+| 改动 | 原因 |
+|---|---|
+| `filePath: ""` | 让内核自己决定落盘位置。传相对路径 = 让内核存到 cwd 相对的位置 |
+| **先注册等待，再调用** | 内核可能瞬间回调；顺序反了就永远等不到 |
+| 用回调的 `filePath` 登记 | 相对路径不可用，回调给的是绝对路径 |
+
+为此在本地 Waylay 的 `bridge.js` 加了一个 20 行的等待钩子：`_onEvent` 里识别
+`onRichMediaDownloadComplete`，按 `msgId|msgElementId` 唤醒 `waitRichMedia()`。
+（`_onEvent` 原来只 console.log + 推给 adapter，**没有事件总线**，所以必须自己加。）
+
+### 另外两条兜底（都不依赖回调）
+
+1. 期望路径若恰好是绝对路径且存在 → 直接登记。
+2. **按 md5 去 QQ 的图片缓存目录找**（有界：2 个 Documents 根 × 最多 4 个账号 × 最近 3 个月）：
+   `Documents/Tencent Files/<uin>/nt_qq/nt_data/Pic/<年-月>/Ori/<md5>.<ext>`。
+   本机验证这条目录**真实存在**（`…/Pic/2026-09、2026-10、2026-11`）。
+
+### 顺带排除一个假设
+
+那 5 张失败的图**本地一张都没有**（`Ori/` 下逐个查过）—— 说明不是"下载了但没登记"，
+是内核确实没拿到。所以"回调 + 绝对路径"是唯一还没试过的正路。

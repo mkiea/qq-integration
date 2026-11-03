@@ -43,9 +43,18 @@ const REQUIRED = PERSONA_BLOCKS.filter((b) => b.required).map((b) => b.id)
   check('B 骨架小于预算的 10%（写起来不用先删模板）', bytes < PERSONA_BUDGET_BYTES * 0.1, `${bytes} / ${PERSONA_BUDGET_BYTES}`)
   const targetSum = PERSONA_BLOCKS.reduce((sum, b) => sum + b.targetBytes, 0)
   check('B 按各块目标字节写满，仍装得下预算', targetSum < PERSONA_BUDGET_BYTES, `${targetSum} / ${PERSONA_BUDGET_BYTES}`)
-  check('B 必填三块的目标字节合计不超过预算的一半', PERSONA_BLOCKS.filter((b) => b.required)
+  check('B 必填五节的目标字节合计不超过预算的一半', PERSONA_BLOCKS.filter((b) => b.required)
     .reduce((sum, b) => sum + b.targetBytes, 0) < PERSONA_BUDGET_BYTES * 0.5)
-  check('B 只有三块必填（最简能写完）', REQUIRED.length === 3, JSON.stringify(REQUIRED))
+  /**
+   * ★ 3 → 5（2026-11-03，主人拍板恢复 10 节）。
+   *
+   * 旧断言「只有三块必填」描述的是 2026-11-01 那次"10 节简化成 5 块"的产物。
+   * 现在按原表恢复：**前五节必填**（她是谁／对面是谁／怎么说话／只发台词／边界与红线），
+   * 后五节（没人找她／表情语音／情绪／世界／示范对照）可选。
+   * 所以这条断言必须跟着变 —— 它不是回归，是**约定本身变了**。
+   */
+  check('B ★ 前五节必填（10 节结构：后五节可选）', REQUIRED.length === 5, JSON.stringify(REQUIRED))
+  check('B 必填的正好是前五节', REQUIRED.join(',') === 'who,other,voice,lines,rules', JSON.stringify(REQUIRED))
 }
 
 // ---------- C. 顺序 = 截断优先级 ----------
@@ -66,7 +75,8 @@ const REQUIRED = PERSONA_BLOCKS.filter((b) => b.required).map((b) => b.id)
 // ---------- D. 缺 / 不缺，必须分得开 ----------
 {
   const partial = analyzePersona('## 怎么说\n\n一条只发一句。\n')
-  check('D 残缺文本报出缺项', partial.missing.length === 2, JSON.stringify(partial.missing))
+  // 10 节恢复后必填是 5 节：只写「怎么说话」⇒ 缺 who/other/lines/rules 共 4 项（旧值 2 是 5 块时代的）
+  check('D 残缺文本报出缺项', partial.missing.length === 4, JSON.stringify(partial.missing))
   check('D 残缺文本里没有"怎么说"（它在）', !partial.missing.includes('voice'), JSON.stringify(partial.missing))
   check('D 残缺文本 ok=false', partial.ok === false)
 
@@ -91,11 +101,18 @@ const REQUIRED = PERSONA_BLOCKS.filter((b) => b.required).map((b) => b.id)
     '3. 怎么说话',
     '一条只发一句。',
     '',
+    '4. 只发台词',
+    '思考不算台词。',
+    '',
     '5. 边界与红线',
     '不自称 AI。',
   ].join('\n'))
-  // 这份样本里「对面是谁」按设计并进 who（她是谁那块要带一句'对面是谁'），所以能认出的**不同块**是 3 个。
-  check('E ★ `#` 被吃掉时仍然认得出块', pasted.blocks.filter((b) => b.present).length === 3,
+  /**
+   * ★ 3 → 5（2026-11-03，10 节恢复）。旧样本故意漏了「只发台词」，因为那时它是并进 voice 的；
+   * 现在它是**独立必填块**，所以样本补上第 4 节，断言变成"五个必填块全认出、且不报缺项"——
+   * 这才是这条用例真正想验的事：**`#` 整片丢掉时，靠编号也能把必填块认全**。
+   */
+  check('E ★ `#` 被吃掉时仍然认得出块', pasted.blocks.filter((b) => b.present).length === 5,
     JSON.stringify(pasted.blocks.map((b) => `${b.id}:${b.present}`)))
   check('E ★ 这种情况不该报"缺必填"', pasted.missing.length === 0, JSON.stringify(pasted.missing))
 

@@ -86,6 +86,9 @@ const timeoutMs = timeoutArg > 0 ? timeoutArg * 1000 : 120_000
 const TIMEOUT_OVERRIDE = {
   'stress-unit.mjs': 300_000,
   'soak-unit.mjs': 180_000,
+  // 2026-11-03：单跑 4.4s，但全量时机器一忙就被 120s 通用上限判成"卡死"（实测发生过一次）。
+  // 它本身没有任何等待逻辑，慢只可能是被别的套件/宿主进程挤到——给够余量，别制造假故障。
+  'inbound-at-trace-unit.mjs': 180_000,
 }
 
 console.log(`共 ${all.length} 个套件；本次跑 ${toRun.length} 个，跳过 ${skipped.length} 个（要活宿主）`)

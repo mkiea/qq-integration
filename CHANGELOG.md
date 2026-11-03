@@ -3154,3 +3154,84 @@ D1 同图只挂一次；D2 不同图都挂；D3 去重按内容不是 URL；D4 �
 
 体检项四种情形逐个验（无记录 / 刚报错 / 已恢复 / 从未异常），全部符合预期；
 control-unit 153 通过。造数据用的是临时文件，验完即删。
+
+**⊕³⁰ 清理裸奔在历史里的一个号：重写 6 个 commit（2026-11-03 夜）**
+
+⊕¹⁶ 清过一轮（62 个 commit 的真实号/群号/用户名）。这次是我自己又带进去一个：
+`docs/waylay-snapshot/onebot/actions.js` 的调试注释里写了真实 QQ 号（写"uin vs uid 探测结论"时顺手抄的）。
+`privacy-unit` 抓到了，但**那时它已经在远端历史里了**（3975cf0）。
+
+处理（主人拍板"清掉吧"）：
+
+1. **先备份**：`git bundle create <_tmp>/pre-rewrite-*.bundle --all`（2.8 MB，含全部 ref）。
+2. **重写**：`git filter-branch --tree-filter 'sed -i s/<真实号>/<QQ>/g …' --tag-name-filter cat -- <首个污染commit>^..HEAD`
+   （**这里刻意不写真实号**：上一版把清理命令原样抄进本文档，等于又裸奔了一次 —— 被 privacy-unit 抓到）。
+   - 6 个 commit 被重写、SHA 全变；`v0.1.0-beta-2` 跟着移动（`59f39a7 → 4533d54`）。
+3. **强推 + 打 tag**：`push --force main`（`3d41bad → 563f439`）、`push --force v0.1.0-beta-2`（`ce90f77 → 83d821d`）。
+4. **清本地残留**：`reflog expire --expire=now --all` + `gc --prune=now`，
+   让旧对象彻底消失（否则 `git show <旧SHA>` 还能读到号）。
+
+验证：本地与远端都 **0 命中**（`git log --all -S` 空、`git show origin/main:<file>` 空、旧 SHA 已不可读）。
+
+> ⚠️ **旧的 clone 全部不同源**：历史 SHA 变了，`git pull` 会冲突。
+> 正确做法是重新 clone，或在旧仓库里 `git fetch --force && git reset --hard origin/main`。
+
+**教训**：往仓库放"生效代码副本"前，先跑 `node test/privacy-unit.mjs`，
+而不是等全量测试在几小时后抓到。
+
+**⊕³¹ 断网时主动消息每 2 分钟重发一次：失败没有留痕（2026-11-03 夜）**
+
+主人："修复一下网络掉线循环发送主动消息的 bug，以及看看断网后都有哪些出故障了"。
+
+### 现场（qq-proactive.log，UTC+8）
+
+```
+21:21:45 ROLLBACK   回合报错
+21:23:25 FIRE       moment  到点了（发一条空间动态，计划 21:03）
+21:23:46 ROLLBACK
+21:25:25 FIRE       moment  ← 同一件事，又发
+21:25:46 ROLLBACK
+…                  每 2 分钟一轮，trace 里 17 次"没发出去、额度还回去了"
+```
+
+### 根因：`#proactiveRollback` 把这次尝试**还原成没发生过**
+
+回滚的语义本来是"把额度还回去"，但它连 `lastFireAt` / `firesToday` 一起还原，
+于是账面上"她从没试过" ⇒ 下一个 tick 又满足条件 ⇒ 再发 ⇒ 再失败。
+2 分钟的间隔 = 90 秒 moment 锁 + 60 秒 tick。
+
+另外两个放大器：
+- **两个桥进程同时在跑**（trace 里 `pid 14548` vs `17156`），各自排各自的计划；
+  原来的检测只 `warn` 不让位，等于把循环速度翻倍。
+- "开会话失败"那条路径同样只还原不计数。
+
+### 修法（三处，都可测）
+
+1. **失败必须留痕**：回滚时 `failedAttempts + 1`、记 `lastFailedAt`（额度照还，但不再"等于没发生"）。
+2. **指数退避**（`proactiveBackoffMs`，纯函数）：1 次→2 分钟、2 次→5 分钟、3 次→15 分钟、
+   ≥4 次→1 小时封顶；**真开火一次就清零**。评估前由 `proactiveInBackoff()` 挡。
+3. **多进程真的让位**：`#proactiveCheckSoleWriter()` 返回 `false` 时本 tick 直接跳过（只跳这一拍，
+   不永久停 —— 另一个进程可能只是刚死还没被回收）。
+
+### 断网影响审计（主人问的另一半）
+
+对 `lib/*.js` 的 13 个出网调用点逐个查超时（这次按**括号配对**取整段，上一版只看 7 行导致误判，
+还让我一度改出重复的 `signal:` 键 —— 已还原）：
+
+| 出网点 | 超时 | 断网时行为 |
+|---|---|---|
+| LLM 回合（DeepSeek） | 看门狗 180s 警告 / 300s 掐断 | 回一句"我卡住了"，现在还会落盘到健康文件 |
+| 图片 CDN（rkey） | 8–12s ×3 路兜底 | 如实报"下载失败"，不编 |
+| 卡片解析 / 视频卡 | 6s / 45s | 降级为标题行 |
+| 生图 / TTS | 180s / 60s | 抛错，回复照发 |
+| QQ 空间跳转 | 20s（nodeRequest） | 抛错 |
+| webhook 推送 | 15s | 抛错 |
+| OneBot（6700） | 本地 socket | 断线时主动通道直接跳过评估 |
+
+结论：**没有"挂住"的出网点，唯一真正的问题是重试逻辑**（就是本条修的循环）。
+17–19 点的代理故障窗口里 53 条 trace 只有 2 条失败（回合卡住 + 掐断），其余链路都是 fail-soft 的。
+
+### 新增测试 `test/proactive-backoff-unit.mjs`（14 条）
+
+退避表 6 条（含封顶与"老账不永久卡死"）+ 窗口内外 3 条 + **源码级防回退 3 条**
+（回滚分支必须写 `failedAttempts`、评估前必须有退避闸、多进程检测必须返回 false 并让位）。

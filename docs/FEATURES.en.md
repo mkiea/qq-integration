@@ -1,5 +1,17 @@
 # Feature details (v0.5 "See it, find it")
 
+> ⚠️ **This is a historical snapshot of v0.5** (around 2026-10-31). It is kept because the
+> "where the edges are" notes are still useful, but **the behaviour has changed** — do not read
+> it as a description of the current build. Three things that will mislead you:
+>
+> | What this page says | What it does now |
+> |---|---|
+> | merged forwards expand "one level, no recursion" | **one nested level is inlined** (a forward inside a forward), see CHANGELOG ⊕¹⁸ |
+> | `/ocr` uses "NapCat's `ocr_image`" | the backend is **Waylay** now (NapCat retired 2026-10-30) |
+> | images are only "visible" | **original download + rkey signature + 3-frame GIF sheet + content dedup**, see ⊕²³/⊕²⁴ |
+>
+> For current behaviour trust [README](../README.en.md) and [CHANGELOG](../CHANGELOG.md).
+
 > Moved out of the README (which got too long). This page covers **how the shipped capabilities work and where the edges are**; to get it running, see the [README](../README.en.md).
 
 v0.5 does two things: it wires up capabilities that were **already implemented but never called**, and it makes "what the group already said" findable again.

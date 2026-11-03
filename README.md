@@ -566,13 +566,16 @@ if (api.instanceId !== lastInstanceId) { lastInstanceId = api.instanceId; reRegi
 
 node test/control-unit.mjs        # 也可以逐个跑：node test/<name>-unit.mjs
 
-#    69 个 *-unit.mjs（4299 条断言）：桥的分支/命令/守卫、控制台 HTTP 与体检、录制回放与注入、注入安全边界、硬约束验收台、
+#    106 个 *-unit.mjs（约 5100 条断言）：桥的分支/命令/守卫、控制台 HTTP 与体检、录制回放与注入、注入安全边界、硬约束验收台、
 
-#    `/为什么` 的决策链翻译（why-unit）…
+#    `/为什么` 的决策链翻译（why-unit）、图片去重（vision-dedup）、人设结构（persona-spec）…
 
-#    一次性全跑（PowerShell）：
+#    一次性全跑（推荐：带超时与逐套件摘要）：
 
-#    Get-ChildItem test -Filter '*-unit.mjs' | ForEach-Object { node $_.FullName }
+#    node tools/test-all.mjs
+
+#    ⚠️ 这里刻意不写死"多少个套件 / 多少条断言"的精确值 —— 它们每加一个测试就变，
+#       写死必然陈旧。以 `node tools/test-all.mjs` 末尾那行汇总为准。
 
 # 2) 回放的端到端验收：真实桥代码 + 真实 OneBot 服务端，沙箱 + dry-run，不需要宿主
 
@@ -615,7 +618,20 @@ node tools/sync-runtime.mjs --check    # 一份活副本时：如实说"无事�
 
 ## 记忆与人设说明（重要）
 
-本插件**不内置任何人设、偏好或群规则**。小鲸鱼人设、问答偏好、群内行为规则等记忆内容由 **dsh-mnemon 插件**的运行时记忆（`~/.mnemon/runtime/USER.md` + `MEMORY.md`）注入每个 QQ 会话——插件只负责"功能"，记忆只负责"灵魂"，两者完全解耦。换人设只改 Mnemon 记忆，换功能只动本插件。
+两件事要分开看，别混：
+
+**① 人设（她的性格与说话方式）** —— 就是 **`cwd/AGENTS.md` 这一个文件**，
+按 **10 个小节**写（前 5 节必填），会被**追加**进 system。格式与校验规则见
+[`docs/PERSONA.md`](docs/PERSONA.md)。控制台「人设」页可以直接编辑、按卡片一键切换
+（旧版自动备份，宿主逐轮对账 ⇒ 改完下一轮生效，不必重开会话）。
+`cwd/personas/` 里放人设库，另有两份现成模板可直接套。
+
+**② 记忆（她记住的事）** —— 若装了 **dsh-mnemon** 插件，它的运行时记忆
+（`~/.mnemon/runtime/USER.md` + `MEMORY.md`）也会注入 QQ 会话。
+这一层是"她记得什么"，**不是**"她是谁"。
+
+**换人设改 `AGENTS.md`，换功能动插件配置，换记忆动 Mnemon** —— 三者互不干扰。
+（本插件本身不含任何具体人设：仓库里不写死"她叫什么、脾气怎样"。）
 
 ## ⚠️ 风险与合规说明（使用前必读）
 
@@ -714,7 +730,21 @@ npm run control            # 或 node control/bin/qq-control.mjs --open
 
 ## 更新日志
 
-最近五个版本（始终滚动展示）：
+最近变化（按主题归并；逐条细节在 [CHANGELOG.md](CHANGELOG.md) 的 `⊕` 编号里）：
+
+- **图片链路打通（⊕¹⁷–⊕²⁴）** — 合并转发里的图以前一张都下不来，根因是一层套一层：
+  内核 `getMultiMsg` 要**真 msgId + 真 peer**（嵌套还要传**父** msgId）；本地代理只认**已在磁盘**的文件；
+  原始 CDN 链接缺 `&rkey=` 时效签名（从兜底服务取，缓存到过期）；
+  最后一步是宿主的**像素上限**（5366×9200 的长截图会被拒收 ⇒ 自动缩到长边 1600 再挂）。
+  现在：嵌套一层内联、卡片链接带出、GIF 取三帧拼图、同一张图按内容哈希去重。
+- **控制器改版（⊕²⁵/⊕²⁶）** — 顶部指标条（桥／事件／P95／失败／队列／最后更新，取不到显示 `—`，
+  数据陈旧整条变灰），写操作自动亮顶部进度条，人设改成**卡片一键切换**。
+- **人设结构恢复 10 节（⊕²⁷）** — 前 5 节必填，格式与校验见 [docs/PERSONA.md](docs/PERSONA.md)；
+  顺手修了「`## 表现` 认不出来」的判据 bug（关键词表里漏了标题词自己）。
+- **隐私清理（⊕¹⁶）** — 62 个 commit 的文件内容与提交信息里，真实 QQ 号／群号／本机用户名路径全部抹掉，
+  `HEAD` 文件树哈希不变（代码零改动）。**旧的 clone 都已不同源，需要重新 clone。**
+
+**更早**（v0.1.0 及之前）：
 
 - **v0.1.0** — 「独立插件首版：控制台独立进程 · 端口统一 · Waylay 收编」。控制台回到**独立 node 进程**（`127.0.0.1:8880`，不依赖 dsh，8880 弃用），宿主 `/qqai/console` 只剩 302/JSON 入口（带 token 一跳、没跑自动拉起）；端口统一为 8880/3080/6700（数据面）/13000/8977/8501，NapCat WebUI（6099）随代码退场。`lib/napcat-launch.js` 管理面（提权垫片/加载器判定/WebUI token）整体删除，OneBot 数据面保留；`parseTasklist`/`QQ_CLIENT_RE` 搬进 `lib/waylay-launch.js`，「绝不按镜像名杀 QQ」由护栏 + 按端口反查 + 源码级断言三处钉住。QQ助手面板账号入口 302 到 Waylay 13000；猫娘实验室收缩为一个通往控制台的按钮。测试：control-unit 138/0 · settings-unit 263/0 · console-debug-unit 78/0；并修掉 ui.html 双 `<script>` 块下面板解析量具必然失败的旧账。
 **更早的版本（v0.4 线及之前）见 [CHANGELOG.md](CHANGELOG.md)** —— 完整历史、每个版本的缺陷清单与测试计数都在那里。

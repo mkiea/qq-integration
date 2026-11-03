@@ -465,7 +465,11 @@ npm run control            # or: node control/bin/qq-control.mjs --open
 
 ## Tests
 
-60 unit suites, 4014 assertions in `test/*-unit.mjs`, plus 3 live scripts:
+106 unit suites in `test/*-unit.mjs` (~5,100 assertions), plus 3 live scripts:
+
+> ⚠️ The suite/assertion counts are deliberately **not** pinned to exact numbers here — they change
+> with every added test, and a hard-coded value is guaranteed to go stale. Trust the summary line
+> printed by `node tools/test-all.mjs`.
 
 ```sh
 
@@ -497,7 +501,21 @@ The STT path is best tested with a real QQ voice message (simulated scripts requ
 
 ## Persona & memory (important)
 
-This plugin ships **no persona, preferences, or group rules**. The whale-girl persona, Q&A preferences, and group behavior rules are injected into every QQ session by the **dsh-mnemon** plugin's runtime memory (`~/.mnemon/runtime/USER.md` + `MEMORY.md`) — the plugin provides the *functionality*, memory provides the *personality*, and the two are fully decoupled. Change the persona by editing Mnemon memory; change behavior by editing this plugin.
+Two separate things — do not mix them up:
+
+**① Persona (who she is, how she talks)** — it is the single file **`cwd/AGENTS.md`**, written in
+**10 sections** (the first 5 are required) and **appended** to the system prompt. The format and the
+validation rules live in [`docs/PERSONA.md`](docs/PERSONA.md). The console's Persona page edits it
+directly and switches between presets with one click on a card (the old copy is backed up; the host
+reconciles the file every turn, so a change lands on the **next** turn — no session restart).
+`cwd/personas/` holds the persona library, including two ready-to-use templates.
+
+**② Memory (what she remembers)** — if the **dsh-mnemon** plugin is installed, its runtime memory
+(`~/.mnemon/runtime/USER.md` + `MEMORY.md`) is also injected into QQ sessions.
+That layer is "what she remembers", **not** "who she is".
+
+**Change the persona in `AGENTS.md`, change features in the plugin config, change memory in Mnemon** —
+the three do not interfere. (This plugin itself ships no concrete persona: no name, no temperament.)
 
 ## ⚠️ Risks & compliance (read before use)
 

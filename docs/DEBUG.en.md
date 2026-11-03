@@ -1,7 +1,7 @@
 # Debugging (trace · replay · diagnostics · injection)
 
 > Moved out of the README (which got too long). This page is for digging into **why one specific message got no reply**; if you only want it running, the [README](../README.en.md) is enough.
-> Every console entry below lives in `control/` (default `127.0.0.1:8799`); the panel's "调试台" link starts it for you.
+> Every console entry below lives in `control/` (default `127.0.0.1:8880`; 8799 was the old port, deprecated since v0.1.0); the panel's "调试台" link starts it for you.
 
 Every inbound message gets a **trace id**, and every decision point — **including every silent drop** — records `stage + ok + reason + duration`. That is the design philosophy of this release: when something goes wrong you should never have to guess.
 

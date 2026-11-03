@@ -2942,3 +2942,31 @@ downloadType, filePath }])`，拿回调里的 `filePath`。
 结论：**origin 通道对"刚发的"转发可用，对老图失效（QQ 的时效签名，不是我们能修的，
 除非上 packet 层拿新 rkey）**。桥已经是 origin 优先、proxy 兜底、失败如实计数——
 所以最终形态是：新鲜转发的图能看到；老图如实说"下载失败"。
+
+**⊕²³ 真正的最后一环：rkey（QQ 图片 CDN 的时效签名）（2026-11-03 午）**
+
+新发的转发也 400 —— 排除"过期"假设后，真因是：**`pe.originImageUrl` 根本不带 rkey**。
+QQ 图片 CDN 的 download 链接必须带 `&rkey=…` 时效签名，客户端自己下载时会动态拼上；
+我们拿到的原始链接没有它，直接 fetch 必 400（无论新旧）。
+
+### 别人怎么做（NapCat 两条路）
+
+1. **packet 层**（OIDB 0x11C5，`sendOidbPacket` → `download.info.domain + urlPath + rKeyParam`）
+   —— 我们做不了（几千行，见 WAYLAY-PORTING.md）。
+2. **rkey 兜底服务**：HTTP GET 第三方服务拿
+   `{group_rkey, private_rkey, expired_time}`，**返回值本身就带 `&rkey=` 前缀**，直接拼在
+   download URL 末尾。私聊（appid=1406 / peerUid 以 u_ 开头）用 private_rkey，群聊用 group_rkey。
+   缓存到 expired_time；失败换下一个服务；全挂返回空串（退回原样，不影响别的路）。
+
+**端到端实测（真实转发，只读探针）**：3 张图全部 **HTTP 200**——64KB 的 GIF（头字节 `71,73,70`）
++ 两张 JPEG（`255,216,255`），272ms。rkey 有效期 57 分钟。
+
+### 顺带闭环
+
+转发里的第一张图就是 GIF —— 把 GIF 三帧拼图也接进转发路径
+（原来只有引用/私聊路径有），说明文案「这是动图，共约 N 帧…」进正文。
+
+### 调试手法沉淀
+
+`__msgcall {method:'__nope__'}` 返回内核全部 299 个方法名 —— 找能力先问内核，
+再看 NapCat 怎么用（这次顺序反了，多花了一轮）。

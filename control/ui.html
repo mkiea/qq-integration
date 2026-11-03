@@ -246,6 +246,7 @@
     <div class="metric" id="mLatency"><div class="ml">端到端 P95</div><div class="mv">—</div><div class="mh">入站→回复</div></div>
     <div class="metric" id="mFail"><div class="ml">失败阶段</div><div class="mv">—</div><div class="mh">最近的错误链</div></div>
     <div class="metric" id="mQueue"><div class="ml">注入队列</div><div class="mv">—</div><div class="mh">待消费</div></div>
+    <div class="metric" id="mHost"><div class="ml">宿主/API</div><div class="mv">—</div><div class="mh">读取中</div></div>
     <div class="metric" id="mStamp"><div class="ml">最后更新</div><div class="mv" style="font-size:14px">—</div><div class="mh">本页刚拉过</div></div>
   </div>
 
@@ -1287,6 +1288,23 @@ function paintMetrics(status, perf) {
 
   const stale = Boolean(status?.build?.stale);
   const uiHot = Boolean(status?.build?.uiHot);
+  // 宿主/API 健康（2026-11-03）：桥把回合报错/卡死落盘，这里显示"她那边炸没炸"。
+  // 15 分钟内的异常算"正在炸"（红）；更早的算"已恢复"（绿，附上次异常时间）——
+  // 边界取 15 分钟是因为桥的看门狗 5 分钟才掐，连着两轮失败就该红。
+  const hh = status?.hostHealth ?? null
+  if (hh === null || hh === undefined) {
+    set('mHost', '—', '还没有健康记录（桥没跑过或版本旧）', '')
+  } else {
+    const issueAgeMin = hh.lastIssueAt ? Math.round((Date.now() - hh.lastIssueAt) / 60000) : null
+    const burning = issueAgeMin !== null && issueAgeMin < 15
+    if (burning) {
+      set('mHost', '异常', `约 ${issueAgeMin} 分钟前 · ${String(hh.lastIssueReason ?? '').slice(0, 40)}`, 'bad')
+    } else if (issueAgeMin !== null) {
+      set('mHost', '正常', `上次异常 ${issueAgeMin >= 1440 ? Math.round(issueAgeMin / 1440) + ' 天' : issueAgeMin + ' 分钟'}前`, 'good')
+    } else {
+    set('mHost', '正常', '无异常记录', 'good')
+    }
+  }
   set('mStamp', new Date().toLocaleTimeString('zh-CN', { hour12: false }),
     stale ? '进程比代码旧，需重启控制台' : (uiHot ? '界面已热重载' : '本页刚拉过'),
     stale ? 'warn' : '');

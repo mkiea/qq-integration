@@ -391,6 +391,26 @@ export function createSupervisor(config, deps = {}) {
     } catch { /* 删不掉就算了，TTL 之后自然过期 */ }
   }
 
+  /**
+   * 读桥落盘的宿主健康文件（qq-host-health.json，桥的每个回合结束都会更新）。
+   * 文件不存在 = 桥从没跑过或老版本 —— 返回 null，指标条显示"无记录"，不算异常。
+   */
+  function readHostHealth() {
+    const file = join(dirname(config.logs?.runtime ?? ''), 'qq-host-health.json')
+    if (!file || file === 'qq-host-health.json') return null
+    try {
+      const data = JSON.parse(readFileSync(file, 'utf8'))
+      if (!data || typeof data !== 'object') return null
+      return {
+        lastIssueAt: Number(data.lastIssueAt) || 0,
+        lastIssueKind: String(data.lastIssueKind ?? ''),
+        lastIssueReason: String(data.lastIssueReason ?? '').slice(0, 200),
+        lastOkAt: Number(data.lastOkAt) || 0,
+        ageSeconds: data.lastIssueAt ? Math.round((now() - Number(data.lastIssueAt)) / 1000) : null,
+      }
+    } catch { return null }
+  }
+
   async function status() {
     const snapshot = await inspectNow()
     const hostLog = tailLines(config.logs?.hostOut, 120, deps).join('\n')
@@ -403,6 +423,9 @@ export function createSupervisor(config, deps = {}) {
       qr: qrStatus(waylayQrPath(config.waylayBat), now(), deps),
       // Waylay 状态与面板一起返回：页面一次轮询就够，不用为它多发一个请求
       waylay: await waylayStatus(),
+      // 宿主/API 健康（2026-11-03）：桥把回合报错/回合卡死落盘成 qq-host-health.json，
+      // 指标条据此显示"她那边炸没炸"——DeepSeek 事故那种沉默故障，以前只能靠"她没回"猜
+      hostHealth: readHostHealth(),
       warnings: configWarnings(config),
       config: publicConfig(config),
     }

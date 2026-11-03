@@ -65,6 +65,25 @@ export function runDiagnose({ config, snapshot, runtime, events = [], now = Date
     bridgeSeen ? `最近事件 ${Math.round((now - Math.max(...events.map((event) => event.ts))) / 1000)}s 前` : 'trace 文件里没有近期事件',
     '桥随宿主启动；若刚重启宿主，先发一条消息再看', 'warn'))
 
+  /**
+   * 登录的号 vs 配置的 botQq（2026-11-03，主人登错号那天）。
+   *
+   * 为什么单独一项：`config.botQq` 是配置值，登录事件不会覆盖它 —— 登错号时，
+   * 所有拿它当 uin 的地方（发说说换票、selfId 判断、@ 提及）都在对着**错的号**干活。
+   * 桥现在会在发说说前实时校验并拒绝，但"不一致"这件事本身必须在这里先看见。
+   */
+  const login = runtime?.login ?? null
+  if (login && Number(login.actual) > 0 && Number(login.configured) > 0) {
+    const same = Number(login.actual) === Number(login.configured)
+    checks.push(item('account', '登录的号与配置 botQq 一致', same,
+      same
+        ? `都是 ${login.actual}`
+        : `登录的是 ${login.actual}，配置写的是 ${login.configured}`,
+      '换个号重新登录；或把 botQq 改成实际登录号。不一致时说说会被拒绝（避免发到别的号的空间）'))
+  } else {
+    checks.push(item('account', '登录的号与配置 botQq 一致', true, '还没有登录信息（桥没跑过，或后端不回 get_login_info）'))
+  }
+
   // ---- 运行快照（跨进程读到的桥状态）----
   const runtimeFresh = runtime && now - (runtime.updatedAt ?? 0) < FRESH_WINDOW_MS
   const runtimeFile = config?.logs?.runtime || 'qq-runtime.json'

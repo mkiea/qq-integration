@@ -44,7 +44,9 @@ class MockServer extends EventEmitter {
     return { message_id: 1 }
   }
   async sendText(socket, mt, tid, text) { return this.sendSegments(socket, mt, tid, [{ type: 'text', data: { text } }]) }
-  async getLoginInfo() { return { user_id: 999, nickname: 'x' } }
+  // 2026-11-03：必须与 botQq 一致 —— 桥现在会在发说说前校验登录号，
+  // 夹具返回不一致的号等于「登错号」，会被正确地拒绝（那不是这条用例要测的东西）。
+  async getLoginInfo() { return { user_id: 3000000001, nickname: 'x' } }
   async sendPrivateMsg() { return { message_id: 1 } }
   async sendGroupMsg() { return { message_id: 1 } }
   async sendMsg() { return { message_id: 1 } }

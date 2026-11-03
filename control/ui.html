@@ -149,8 +149,9 @@
   .metric .mv { font-size:19px; font-weight:650; line-height:1.35; font-variant-numeric:tabular-nums; }
   .metric .mh { color:var(--dim); font-size:11.5px; }
   .metric.good .mv { color:var(--ok); } .metric.bad .mv { color:var(--bad); } .metric.warn .mv { color:var(--warn); }
-  .metrics.stale { opacity:.55; }
-  .metrics.stale .metric .mh::after { content:"（数据陈旧）"; color:var(--warn); }
+  .metrics.stale { opacity:.72; }
+  /* 陈旧只标**一处**（最后一格），不再每格重复 —— 六个"（数据陈旧）"是噪音，会盖住真正的异常 */
+  .metrics.stale #mStamp .mh { color:var(--warn); font-weight:600; }
 
   /* 顶部细进度条：异步操作有"在进行"的视觉反馈，不阻塞界面 */
   #topProgress { position:fixed; top:0; left:0; height:2.5px; width:0; background:var(--accent);
@@ -241,7 +242,7 @@
        数据来源都是已有的 /api/status 与 /api/perf，没有新增后端接口。 -->
   <div class="metrics" id="metrics" title="关键指标；数据陈旧会变灰并标注">
     <div class="metric" id="mBridge"><div class="ml">桥（QQ 插件）</div><div class="mv">—</div><div class="mh">读取中</div></div>
-    <div class="metric" id="mMsgs"><div class="ml">最近消息</div><div class="mv">—</div><div class="mh">事件条数</div></div>
+    <div class="metric" id="mMsgs"><div class="ml">trace 事件</div><div class="mv">—</div><div class="mh">读取中</div></div>
     <div class="metric" id="mLatency"><div class="ml">端到端 P95</div><div class="mv">—</div><div class="mh">入站→回复</div></div>
     <div class="metric" id="mFail"><div class="ml">失败阶段</div><div class="mv">—</div><div class="mh">最近的错误链</div></div>
     <div class="metric" id="mQueue"><div class="ml">注入队列</div><div class="mv">—</div><div class="mh">待消费</div></div>
@@ -1265,7 +1266,8 @@ function paintMetrics(status, perf) {
     rt ? (online ? 'good' : 'bad') : 'warn');
 
   const events = Number(perf?.events ?? 0);
-  set('mMsgs', events > 0 ? String(events) : '—', events > 0 ? '在 trace 里的事件数' : '还没有消息');
+  // 「5000」是 trace 的**环形上限**，不是消息条数 —— 标签必须说清楚，否则会读成"今天发了 5000 条"
+  set('mMsgs', events > 0 ? String(events) : '—', events >= 5000 ? '已到上限 5000（更早的被挤掉了）' : (events > 0 ? 'trace 里的事件数' : '还没有消息'));
 
   const p95 = perf?.chains?.p95;
   set('mLatency', Number.isFinite(p95) ? `${Math.round(p95)}ms` : '—',
@@ -1283,8 +1285,12 @@ function paintMetrics(status, perf) {
     Number.isFinite(queued) ? '等桥来取' : '没有注入器',
     Number.isFinite(queued) && queued > 0 ? 'warn' : '');
 
-  set('mStamp', new Date().toLocaleTimeString('zh-CN', { hour12: false }), '本页刚拉过');
-  host.classList.toggle('stale', Boolean(status?.build?.stale));
+  const stale = Boolean(status?.build?.stale);
+  const uiHot = Boolean(status?.build?.uiHot);
+  set('mStamp', new Date().toLocaleTimeString('zh-CN', { hour12: false }),
+    stale ? '进程比代码旧，需重启控制台' : (uiHot ? '界面已热重载' : '本页刚拉过'),
+    stale ? 'warn' : '');
+  host.classList.toggle('stale', stale);
 }
 
 async function refresh() {

@@ -77,8 +77,19 @@ const statOf = (times) => (file) => {
   const future = new Date(Date.now() + 60_000)
   utimesSync(uiFile, future, future)
   const after = await (await fetch(url('/api/status'))).json()
-  check('D ★ 代码比进程新时 stale=true', after.build.stale === true, JSON.stringify(after.build))
-  check('D 报出的就是刚改的那个文件', String(after.build.newestFile).endsWith('ui.html'), String(after.build.newestFile))
+  /**
+   * ★ 行为变更（2026-11-03）：**只改界面不再算"进程比代码旧"**。
+   *
+   * `ui.html` 是每次请求按 mtime 热重载的，改它不需要重启；以前把它算进 watchedFiles，
+   * 结果每改一次界面就报一次"进程比代码旧"、指标条整条变灰还每格贴"（数据陈旧）"，
+   * 一天改五次就误报五次 —— 真正的"服务端变了要重启"反被淹没。
+   * 现在改成：只改界面 ⇒ `stale=false` + `uiHot=true`（如实说明它在热重载）；
+   * 服务端文件变新 ⇒ 仍然 `stale=true`（由 A/C 组的 detectStale 单测覆盖）。
+   */
+  check('D ★只改界面不算旧代码（ui.html 是热重载的）', after.build.stale === false, JSON.stringify(after.build))
+  check('D 但会记下 uiHot：界面比进程新', after.build.uiHot === true, JSON.stringify(after.build))
+  check('D 界面文件不再出现在 newestFile 里（它不属于需要重启的那批）',
+    !String(after.build.newestFile).endsWith('ui.html'), String(after.build.newestFile))
 
   await new Promise((resolve) => server.close(resolve))
 }

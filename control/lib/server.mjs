@@ -100,15 +100,32 @@ export function createControlHandler({ config, token, api, ui = '', uiFile = '',
    * 只报、不自动重启 —— 控制台是能启停宿主的进程，自己悄悄重启自己太危险。
    */
   const startedAt = Date.now()
+  /**
+   * ⚠️ `uiFile` **故意不在这里**（2026-11-03 修）。
+   *
+   * `ui.html` 是每次请求按 mtime 热重载的（见下面的 currentUi），所以它"变新"**不需要重启**。
+   * 之前把它算进 watchedFiles，结果每改一次界面，页面上就报"进程比代码旧"、
+   * 指标条整条变灰、每一格还各贴一次"（数据陈旧）" —— 一天改五次界面就误报五次，
+   * 真正的"服务端变了要重启"反而被淹没。
+   *
+   * 这里保留一条**独立**信息 `uiHot`：界面文件比进程新 ⇒ 说明它在热重载，不是故障。
+   * 需要重启的仍然是下面这几个「启动时加载进内存」的文件。
+   */
   const watchedFiles = [
-    uiFile,
     fileURLToPath(new URL('./server.mjs', import.meta.url)),
     fileURLToPath(new URL('./supervisor.mjs', import.meta.url)),
     fileURLToPath(new URL('./staleness.mjs', import.meta.url)),
     fileURLToPath(new URL('../../lib/persona-spec.js', import.meta.url)),
     fileURLToPath(new URL('../../lib/panel.js', import.meta.url)),
   ].filter((file) => file !== '')
-  const build = () => detectStale({ files: watchedFiles, startedAt, stat: statSync })
+  const build = () => {
+    const report = detectStale({ files: watchedFiles, startedAt, stat: statSync })
+    let uiHot = false
+    if (uiFile) {
+      try { uiHot = Number(statSync(uiFile)?.mtimeMs) > startedAt } catch { uiHot = false }
+    }
+    return { ...report, uiHot }
+  }
 
   /**
    * 界面 HTML 的热重载。

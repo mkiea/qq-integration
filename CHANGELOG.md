@@ -2837,3 +2837,46 @@ stage=agent   reason=已转交 agent（文本 363 字 + 1 张图）
 `stress-unit` 在全量里被判"卡死"——它单跑就要 ~90 秒（突发 5000 条），而通用超时是 120 秒，
 并发时超了。**它是慢，不是卡死**。`tools/test-all.mjs` 加单套件超时覆盖
 （stress 300s / soak 180s），不把通用上限抬到所有人都等。
+
+**⊕²⁰ 图还是下不来：不是登记问题，是「文件根本不在本地」（2026-11-03 上午）**
+
+重启后加了日志，`[img-reg]` **一条都没有** —— 说明登记"成功"了（我只在失败分支打日志），
+但代理照样 404。查下去两个事实：
+
+1. **代理只认本地已存在的文件**：`getImageFilePath` 命中缓存后还要 `fs.existsSync`，
+   不存在就去扫 `~/.config/QQ`（Linux 路径）→ Windows 上必然空 → 404。
+   也就是说 **`registerImageFile` 只是"告诉代理文件在哪"，它不下载**。
+2. **原始 CDN 也走不通**：`origin_url` = `https://gchat.qpic.cn/download?...`，
+   这台机直连 **`ENOTFOUND`**（DNS 解析不了），另两条 8 秒超时。
+
+所以根因一句话：**转发记录里的图 NTQQ 从没下载过**，两条取图路径都断了。
+
+### 抄 NapCat 的参数形状，补上"下载"这一步
+
+NapCat 的 `downloadMedia` 用 `callNormalEventV2("NodeIKernelMsgService/downloadRichMedia",
+"NodeIKernelMsgListener/onRichMediaDownloadComplete", [{ fileModelId, downSourceType,
+downloadSourceType, triggerType, msgId, chatType, peerUid, elementId, thumbSize,
+downloadType, filePath }])`，拿回调里的 `filePath`。
+
+我们这套没有 `callNormalEventV2`，所以改成**调用 + 轮询等文件落地**（最多 6 秒）：
+- `ensureImagesLocal(rec)`：算路径（needCreate:true）→ 本地已有就直接登记 → 否则
+  `svc.downloadRichMedia({...})` → 轮询 `fs.existsSync` → 落地后按**小写 md5** 登记。
+- 必须**并行**跑（`Promise.all(records.map(...))`）：8 个节点串行等，最坏 48 秒，
+  比原来 404 的 10 秒还糟。
+- 失败一律打 `[img-dl]` 日志（超时/发起失败/算不出路径），不再静默。
+
+> `events.js` 里本来有个 `_triggerImageDownloads`，但只对**新收到的消息**调用、
+> 且只"发起"不等待 —— 历史和转发记录都走不到它。这次是把它缺的那半补上。
+
+### GIF：首帧 → 三帧拼图
+
+主人报「gif 容易识别错」。原来 `ffmpeg -frames:v 1` 抽**首帧**，而表情包首帧常是空白/过渡帧，
+模型看到一片白，自然认错；只给一帧也把"动"的信息抹掉了。
+
+改成：从 `ffmpeg -i` 的 stderr 读时长与帧率（本机没有 ffprobe）→ 跳过首帧，
+按 **25% / 55% / 85%** 取 3 帧 → `hstack` 拼成**一张**图（只占一个附图预算），
+并在正文里明说「这是动图，共约 N 帧；这张从左到右是其中 3 帧」。
+单帧宽上限 400（三帧 1200 宽），否则 1080 宽的 GIF 拼完 3240 宽会被整体缩小、每帧糊掉。
+任何一步失败都退回老行为（首帧），不让整条消息变哑。
+
+实测（本机 10 帧 / 8fps 的测试动图）：抽 3 帧 ✅、拼图 360×60 ✅、缩放命令不报错 ✅。

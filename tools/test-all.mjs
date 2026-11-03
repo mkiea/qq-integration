@@ -78,6 +78,16 @@ const toRun = targets.filter((f) => !skipped.includes(f))
 // 超时默认值：最慢的离线套件约 25s（ops-bridge），给 4 倍余量。
 const timeoutMs = timeoutArg > 0 ? timeoutArg * 1000 : 120_000
 
+/**
+ * 单套件超时覆盖（2026-11-03）：`stress-unit` 默认就要跑 90 秒左右（突发 5000 条 + 顺序 300 条），
+ * 全量并发时会被 120s 的通用上限杀掉，**表现成"卡死"，看起来像代码坏了**。
+ * 它不是卡死，是本来就慢 —— 所以给它单独放宽，而不是把通用上限抬到所有人都等。
+ */
+const TIMEOUT_OVERRIDE = {
+  'stress-unit.mjs': 300_000,
+  'soak-unit.mjs': 180_000,
+}
+
 console.log(`共 ${all.length} 个套件；本次跑 ${toRun.length} 个，跳过 ${skipped.length} 个（要活宿主）`)
 if (skipped.length > 0) console.log(`跳过：${skipped.join(' ')}`)
 console.log('')
@@ -88,7 +98,7 @@ let suites = 0
 let assertions = 0
 
 for (const name of toRun) {
-  const r = await runOne(join(testDir, name), timeoutMs)
+  const r = await runOne(join(testDir, name), TIMEOUT_OVERRIDE[name] ?? timeoutMs)
   const t = tally(r.out)
   suites++
   if (t) assertions += t.passed + t.failed

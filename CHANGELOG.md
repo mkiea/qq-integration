@@ -2794,3 +2794,46 @@ getMultiMsg(peer, parentMsgId, msgId)     ← 三个实参，2、3 都要**真 m
 - ✅ 离线：嵌套内联、转发卡片带链接、坏 JSON 降级、纯图节点不丢（`forward-unit` 111 → **120**）
 - ✅ 真机（只读探针）：`getMultiMsg(peer, 外层, 内层)` → `count=10`；`getMultiMsg(peer, 内层, 内层)` → `result=4`
 - ⏳ 未验证：群聊里的聊天记录、三层以上嵌套、转发里图片下载（要重启后发一条才知道）
+
+**⊕¹⁹ 转发里的图"只下来一两张"：代理 404 + 每张等 10 秒（2026-11-03 早）**
+
+主人："貌似可以看但是下载不了全部的（？）"。trace 一句话就露馅：
+
+```
+stage=forward ms=51671  reason=转发内容已展开（10/10 条，来源 api）
+stage=agent   reason=已转交 agent（文本 363 字 + 1 张图）
+```
+
+10 条记录、**51 秒**、只附上 **1 张**图。debug 日志里是 5 条
+`forward image download failed: HTTP 404`，每条**相隔正好 10 秒** —— 那是代理对
+"没登记的 key"先干等 10 秒（等 NTQQ 下载）再 404。
+
+### 三个独立原因
+
+1. **`registerImagesOf` 静默跳过**：它要求 `picElement.md5HexStr` **和**
+   `getRichMediaFilePathForGuild()` 同时成功，任一不满足就 `continue`（还被 `catch {}` 包着）。
+   而转发记录的 `picElement` 常常没有 `md5HexStr`，只有 `fileName`。
+2. **大小写不一致**：代理 URL 的 key 是**小写** md5
+   （`/file/a79927d8….png`），而登记用的是 `pe.md5HexStr` 原样（NTQQ 里是**大写**），
+   `_imageFileCache` 是 `Map.set(key)` —— **区分大小写**。登记了也查不到。
+3. **Windows 上兜底不存在**：`getImageFilePath` 找不到缓存时会扫 `~/.config/QQ` 找图，
+   那是 **Linux 路径**；Windows 的 QQ 数据在 `Documents/Tencent Files/...`。
+   所以 Windows 上"登记"是唯一的路，它一失败就必然 404。
+
+### 修法
+
+| 位置 | 改动 |
+|---|---|
+| `actions.js` `registerImagesOf` | md5 缺失时从 `fileName` 反推；**统一转小写**（与代理 key 对齐）；路径解析依次试 `getRichMediaFilePathForGuild` / `getRichMediaFilePath` / `getImagePath`；**失败必须打 `[img-reg]` 日志**（原来静默吞掉，只能靠猜）|
+| `message.js` | 图片段多带一个 `origin_url`（`pe.originImageUrl`）。原来它被代理 URL 覆盖后**直接丢掉**了 |
+| `bridge.js` 下载 | 先 `origin`（原始 CDN，新消息 rkey 还没过期，几十毫秒）后 `proxy`（失败要付 10 秒），两次都失败才计入 `fwdFailed` |
+| `bridge.js` 预算 | 写死的"4 张"改成配置 `forwardImageMax`（1–10，默认 4）；跳过的张数在正文里**如实说**，并提示去调这个开关 |
+
+顺序是"先便宜的、后贵的"：origin 失败通常 400/403 秒回；proxy 失败要等 10 秒。
+把贵的放后面，一条记录最坏多花不超过一秒。
+
+### 测试入口的一个假故障
+
+`stress-unit` 在全量里被判"卡死"——它单跑就要 ~90 秒（突发 5000 条），而通用超时是 120 秒，
+并发时超了。**它是慢，不是卡死**。`tools/test-all.mjs` 加单套件超时覆盖
+（stress 300s / soak 180s），不把通用上限抬到所有人都等。

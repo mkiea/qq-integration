@@ -49,3 +49,37 @@ NapCat 的那层有几千行。为了"群精华列表"这种边缘功能做这�
 判断标准很简单：**数据在本地就有吗？**
 - 有（消息、历史、图片缓存）⇒ 走内核，能移植，已移植。
 - 没有（下载链接、精华、荣誉 —— 都要 QQ 服务端算）⇒ 必须有 packet 层，否则做不了。
+
+## 附：我们在本地 Waylay 副本上改过哪些（`_tmp/rin-inject/` 不受版本管理，这里是**改动清单**）
+
+> 为什么单独记一份：真正生效的是 `_tmp/rin-inject/waylay-src/onebot/*.js`（注入到 QQ 进程里），
+> 而那个目录被 `.gitignore` 排除了。换机器/清目录时，**这些改动会消失**。
+> 这里只记"改了什么、为什么"，实现以工作副本为准。
+
+### 1. `actions.js` — 合并转发（聊天记录）
+
+- `get_forward_msg` 接受三个**扩展参数**：`msg_id` / `user_id` / `group_id`（OneBot v11 之外，别的实现忽略）。
+- `fetchForwardList(resId, bridge, translator, depth, context)`：有 `context` 时走
+  `getMultiMsg(peer, parentMsgId, msgId)`。
+  - **顶层**：`(peer, X, X)` → `result=0`、`msgList` 非空
+  - **嵌套**：`(peer, 外层X, 内层Y)` → 有内容；`(peer, Y, Y)` → `result=4 Data Not Existed`
+    （Y 不是真消息，只是外层载荷里的子元素编号）
+  - `peer.peerUid` 私聊必须是 **uid**（`u_xxx`，用 `eventTranslator.getUidByUin` 换），群聊传群号；
+    传 QQ 号会 `result=4`，很容易误判成"消息过期"
+- `expandForwardNodes` 每个 record 都调 `registerImagesOf`（转发里的图要登记，否则代理 404）。
+- `registerImagesOf`：md5 缺失时从 `fileName` 反推、**统一小写**（代理 key 是小写）、
+  路径依次试 `getRichMediaFilePathForGuild` / `getRichMediaFilePath` / `getImagePath`、
+  失败打 `[img-reg]` 日志。
+
+### 2. `message.js` — 图片段多带 `origin_url`
+
+`pe.originImageUrl` 原来被代理 URL 覆盖后丢掉。现在两个都给：
+`url`（本地代理）与 `origin_url`（原始 CDN）。桥先试 origin、失败再试 proxy
+（origin 失败通常秒回，proxy 对未登记的 key 要等 **10 秒**）。
+
+### 3. 已知未修（有证据、但没动）
+
+`getImageFilePath` 的兜底会扫 `~/.config/QQ` 找图 —— 那是 **Linux 路径**，
+Windows 上 QQ 数据在 `Documents/Tencent Files/<uin>/nt_qq/nt_data/Pic/`。
+所以 Windows 上"登记"是唯一的路，登记不上的图必然 404。补 Windows 扫描要做成
+**带索引的后台扫描**（每次请求现扫太慢），还没做。

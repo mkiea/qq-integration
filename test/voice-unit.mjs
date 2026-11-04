@@ -53,8 +53,10 @@ check('V2 XML 转义（& < >）', (() => {
 })())
 
 // ---------- V3 非 azure 唱 ----------
-check('V3 openai 唱 → 明确抛错', await (async () => {
-  try { await synthesizeSong({ ttsProvider: 'openai', ttsApiKey: 'x' }, '甲'); return false } catch (error) { return /不支持唱/.test(error.message) }
+// 2026-11-04 改：openai + 本地服务也能唱了（走 /v1/audio/sing），
+// 所以这里的判据从"非 azure 一律拒绝"变成"**没配 ttsBaseUrl** 才拒绝"。
+check('V3 openai 且没配 ttsBaseUrl → 明确抛错', await (async () => {
+  try { await synthesizeSong({ ttsProvider: 'openai', ttsApiKey: 'x', ttsBaseUrl: '' }, '甲'); return false } catch (error) { return /没配 ttsBaseUrl|不支持唱/.test(error.message) }
 })())
 check('V3 azure 但没 key → 抛错（不静默）', await (async () => {
   try { await synthesizeSong({ ttsProvider: 'azure', ttsApiKey: '' }, '甲'); return false } catch (error) { return /ttsApiKey/.test(error.message) }

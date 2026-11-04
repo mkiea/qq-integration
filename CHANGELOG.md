@@ -3329,3 +3329,49 @@ Azure 没有 singing 风格（查过，它的 style 是 cheerful/sad/newscast �
 
 `test/voice-unit.mjs` 21 条：切句 6（含超长与上限）、唱腔 SSML 7（含 pitch 循环、XML 转义、空歌词）、
 非 azure 拒绝 2、音色清单 3、源码级防回退 4（中文别名 / 三个分支 / 不被截断 / 先语音后回执）。
+
+**⊕³⁴ 部署语音服务：唱歌真的能唱了（2026-11-04，主人："你来部署吧"）**
+
+### 部署时发现的三件事（都比"装个模型"重要）
+
+1. **本机早就有 TTS 服务**：`qq_chat/tts-server/server.py`（edge-tts 的 OpenAI 兼容封装，:8977），
+   四音色 贝壳/白浪/海星/暗潮 = DeepSeek 网页版朗读音色的等价物。
+   也就是说"她有自己的声音"一直可用，只是 `ttsEnabled: false` 没开。
+2. **原来的 `!音色` 是错的**：我昨天硬编码了 12 个 Azure 音色、切换只改内存里的 `config.ttsVoice`。
+   而这个服务自带 `GET /v1/audio/voices`（真实音色表）和 `POST /voice`（写 voice.txt、重启保留）。
+   对着真实服务改，命令才有意义。
+3. **不能装 GPT-SoVITS**：github.com 与 huggingface.co 都返回 000（不通），系统 Python 是 3.13
+   （GPT-SoVITS 要 3.9/3.10）。所以放弃"下载模型做克隆"，改走"把现有服务的能力补齐"。
+
+### 做了什么
+
+- **服务端加唱歌** `POST /v1/audio/sing`：歌词切句 → 每句不同 `pitch`（`+0/+20/+40/+20/+60/+40 Hz`）
+  → edge-tts 逐句合成 → **mp3 字节拼接**。
+  拼接能成立的前提是边缘 TTS 输出固定 24kHz/48kbps/mono 的 MPEG 帧流（本机没 ffmpeg 做交叉淡化，
+  所以句间是硬切，听感上像"一句一句唱"）。
+- **桥侧 `synthesizeSong` 扩成两个后端**：azure 走 SSML；其余走 `{base}/audio/sing`。
+  路径要拼对：配置里 `ttsBaseUrl` 已含 `/v1`，所以是 `${base}/audio/sing`，不是 `/v1/audio/sing`。
+- **`!音色` 改接真实服务**：列表来自 `/v1/audio/voices`（当前标 ▶），切换走 `POST /voice`。
+  本地服务不可用时，错误里直接说"先用 启动语音服务.cmd 把它跑起来"。
+- **`!唱` 放开**：不再要求 provider=azure，只要 azure 或配了本地服务即可。
+- 服务代码纳入版本库 `tools/tts-server/`（否则重装就丢 —— 和 Waylay 那次一样）。
+
+### 踩到的坑（值得记）
+
+- **`Start-Process` 启动的服务连不上微软**（`upstream connect failed: 10061`），
+  而从 Bash/终端直接起的同一个脚本就正常。同一个 Python、同一份代码 ⇒ 是**启动环境**的差异
+  （沙箱给不同会话注入的代理/网络策略不同），不是代码问题。
+  ⇒ **以后起这个服务用 `启动语音服务.cmd`（双击），别从自动化会话里 Start-Process。**
+- 代理对 edge-tts 的影响：它是 **websocket**，某些代理转发不了；直连 `speech.platform.bing.com`
+  返回 400（说明 TCP 通）但 websocket 仍可能被拒 ⇒ 别想当然"能 ping 通就能合成"。
+
+### 端到端验证（4/4，用真实配置而不是 curl）
+
+| 项 | 结果 |
+|---|---|
+| 读音色列表 | 12 个，current=贝壳 |
+| 普通语音 | 25632 bytes |
+| **唱歌** | **39744 bytes / 4 句 / 4.6 秒合成完 / 头 `fff3`（MPEG-2 Layer III）** |
+| 音色切换 | 贝壳 → 海星 → 贝壳（会写 voice.txt，测完已还原） |
+
+产物 `_tmp/e2e-speech.mp3` / `_tmp/e2e-sing.mp3` 可直接播。

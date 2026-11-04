@@ -684,6 +684,7 @@ node tools/sync-runtime.mjs --check    # 一份活副本时：如实说"无事�
 - **[docs/DEBUG.md](docs/DEBUG.md)** —— 调试 / 排障：trace、离线回放、事件注入、一键体检、诊断包、硬约束验收台
 - **[docs/FEATURES.md](docs/FEATURES.md)** —— v0.5 能力细节：合并转发展开、`/文件` `/取` `/相册` `/ocr`、按天归档与 `/找`、群成员与群信息、表情反应
 - **[docs/REDTEAM.md](docs/REDTEAM.md)** —— **红蓝对抗手册**：资产清单、五类攻击者画像、J–T 组 64 条攻击（每条带客观判据）、22 条防线台账、13 项已知缺口。想让别人帮你打，就把这份给他
+- **[docs/VOICE-AND-SINGING.md](docs/VOICE-AND-SINGING.md)** —— **唱歌与音色**：念唱／SVS（DiffSinger）／翻唱（so-vits-svc·RVC）三条路线怎么选、零样本克隆四档做法与显存/许可对照、为什么云 TTS 普遍不能唱，以及 8GB 卡上的落地建议
 
 ## 独立控制台（control/）
 

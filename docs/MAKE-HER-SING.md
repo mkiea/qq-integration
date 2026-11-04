@@ -108,3 +108,46 @@ B 站教程里的标准流程（[flowpixai 的翻唱教程](https://flowpixai.co
 1. **自己的声音**训练一个声库（工程量大，但无授权问题）；
 2. **ACE Studio 声音克隆**（克隆现成的「她」的合成音，边界仍需自己判断）；
 3. **接受"她借用某声库唱歌"**，并如实署名该声库 —— 不能声称那是她自己的声音。
+
+---
+
+## 补充（2026-11-04 晚）：有人把整条翻唱流水线做成了 DSH 插件
+
+比"手动装 OpenUtau + 找声库"省事得多，**已核过代码与依赖**：
+
+### 两个仓库
+
+| 仓库 | 定位 | 关键点 |
+|---|---|---|
+| [`CixiSVesper/dsh-soundtry`](https://github.com/CixiSVesper/dsh-soundtry) | **音频理解**（6 工具）：转写 whisper-medium、节奏、旋律、和弦、结构、**人声分离** | 分离用 **UVR MDX-Net + onnxruntime**（**不需要 torch**）；要 Python 3.10–3.12 |
+| [`InariNGT-Ofiicial/dsh-cover-pipeline`](https://github.com/InariNGT-Ofiicial/dsh-cover-pipeline) | **AI 翻唱流水线**（9 工具）：`分离 → 换声 → 移调 → 混音 → 验收` | JS 零运行时依赖；重活交给 **MSST**（分离）+ **DDSP-SVC**（换声） |
+
+### 为什么它比 OpenUtau 路线更适合"唱歌"
+
+- **不需要谱面**：直接拿现成的歌，把人声换成目标音色（SVC 思路）
+- **有现成音色**：8 人音色包（演示用「祥子」267MB）
+- **整合包自带 `env/python.exe`** ⇒ 不吃系统 Python 3.13 的限制
+
+### 落地只缺三个网盘包（约 5GB，来源见 `materials/README.md`）
+
+| # | 材料 | 码 | 落位 |
+|---|---|---|---|
+| 1 | MSST-GUI 人声分离整合包 | `u3r2` | `<根>/01_人声分离_MSST-GUI` |
+| 2 | DDSP-SVC 6.2 整合包 | `j44k` | `<根>/02_模型推理_DDSP-SVC-6.2/DDSP-barbara-6.2` |
+| 3 | 8 人音色模型包 | `2aj9` | `<根>/03_音色模型_MYGO-AveMujica` |
+
+默认根目录 `D:/AI-Song`（插件按 `01_/02_/03_` 前缀自动发现）。
+
+### 本机自检结果（2026-11-04）
+
+```
+✅ 随包流水线脚本 8/8（runtime/ 齐全）
+❌ MSST / DDSP 目录与各自 python、Kim/karaoke 权重、ContentVec、HiFiGAN、音色「祥子」
+```
+⇒ 插件本体没问题，**全部缺口都在那三个网盘包里**。
+
+### 许可提醒（作者写得很清楚，值得照抄）
+
+- 插件 MIT **不覆盖**第三方权重、音色、词曲、录音。
+- **音色模型是衍生权重**，公开再分发有授权风险 ⇒ 只自己用没问题，发布要注意。
+- 翻唱成品仍涉及**原曲版权**。

@@ -174,6 +174,15 @@ dsh plugin --profile <profile> add <本目录>                # 注册进 profil
 ⚠️ **换目录不会自动搬旧数据**。要搬就把旧的 `qq-*` 整个拷过去，**包括 `qq-canary.json`**：
 重新生成金丝雀，以前贴出去的旧哨兵串就再也认不出来了，等于把"泄露过"悄悄洗白。
 
+> **关于 `qq-control.json`（控制台的路径配置）**
+> 它**不是必须的**：控制台启动时会自己探测 `nodeExe` / `dshBin` / `pluginRoot` / 端口，
+> 探测结果可以先用 `node control/bin/qq-control.mjs --print-config` 看一眼。
+>
+> 只有在**探测结果不对**（比如你把 Node 装在非常规位置、或想同时维护两套数据目录）时，
+> 才需要手写这个文件：照仓库根的 **`qq-control.example.json`** 复制成 `qq-control.json`，
+> 把里面的 `C:\Users\<你>\chat role` 换成本机真实路径即可。
+> 这个文件**不进 git**（里面会写 QQ 号和绝对路径），所以模板单独放在仓库里。
+
 ### 4. 启动顺序（顺序错了会看到各种"没反应"）
 
 1. 双击 `control/启动控制台.bat`（或 `node control/bin/qq-control.mjs`），记下它打印的带 token 地址；

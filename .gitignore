@@ -19,6 +19,8 @@
 # 本机配置（机器相关的绝对路径、端口、账号）与密钥：这些**永远**不进版本库。
 # `qq-control.json` 里可能写着 waylayUin（QQ 号）和 TTS/STT 的 key。
 /qq-control.json
+# 例外：脱敏模板要进仓库（否则新人不知道要建这个文件）
+!/qq-control.example.json
 .env
 .env.*
 

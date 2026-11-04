@@ -184,7 +184,12 @@ console.log('='.repeat(64))
 const filled = inspectMemory()
 console.log('   重启前：history ' + filled.entries + ' 条 / archive ' + filled.archived + ' 条 / ' + (filled.bytes / 1024).toFixed(1) + ' KB')
 checkA('B1 窗口上限生效（history ≤ 60）', filled.entries <= 60, filled.entries + ' 条')
-checkA('B2 挤出的进归档而不是丢（archive > 0）', filled.archived > 0, filled.archived + ' 条')
+// 归档只有"挤满窗口之后"才会产生 —— rounds ≤ 60 时这条不适用，跳过而不是判失败
+if (ROUNDS > 60) {
+  checkA('B2 挤出的进归档而不是丢（archive > 0）', filled.archived > 0, filled.archived + ' 条')
+} else {
+  console.log(`   SKIP B2（本次只发 ${ROUNDS} 条，未挤满 60 条窗口，不会产生归档）`)
+}
 
 // 注入层：读源码确认走 systemPrompt.section（而不是 message content）
 const bsrc2 = readFileSync(new URL('../lib/bridge.js', import.meta.url), 'utf8')
@@ -198,21 +203,40 @@ await safeStop(bridge)
 
 console.log('C. DSH 侧的间接证据（本探针不下结论）')
 console.log('='.repeat(64))
-const dshSessions = 'C:/Users/SolimPurmiss/.dsh/sessions/--C-Users-SolimPurmiss-Desktop-chat~0020role-qq_chat--'
+// ---------- C. DSH 侧的间接证据（只报事实，不下结论）----------
+// ★ 不写死本机路径（2026-11-04 自查）：从 --dsh-dir 或 HOME 推断，
+//   推断不出来就跳过 —— 一个探针不该因为"换台机器"就报错或静默读错目录。
+const dshSessions = (() => {
+  const explicit = argOf('--dsh-dir', '')
+  if (explicit !== '') return explicit
+  const home = process.env.USERPROFILE || process.env.HOME || ''
+  if (home === '') return ''
+  // DSH 的会话目录名来自"工作目录"，包含它的绝对路径编码；这里不做猜测，
+  // 只试最常见的 <home>/.dsh/sessions，找不到就跳过。
+  return join(home, '.dsh', 'sessions')
+})()
 if (existsSync(dshSessions)) {
-  const dirs = readdirSync(dshSessions).filter((d) => !d.startsWith('.'))
+  // sessions/ 下面一层是"按工作目录编码"的目录，再下一层才是会话目录。
+  // 遍历两层，不假设这个仓库用了哪个工作目录。
   const sizes = []
-  let scanned = 0
-  for (const d of dirs) {
-    try {
-      for (const f of readdirSync(join(dshSessions, d))) {
-        sizes.push(statSync(join(dshSessions, d, f)).size)
-        scanned += 1
+  let workspaceDirs = 0
+  let sessionDirs = 0
+  for (const ws of readdirSync(dshSessions)) {
+    if (ws.startsWith('.')) continue
+    const wsPath = join(dshSessions, ws)
+    try { if (!statSync(wsPath).isDirectory()) continue } catch { continue }
+    workspaceDirs += 1
+    for (const sess of readdirSync(wsPath)) {
+      const sessPath = join(wsPath, sess)
+      try { if (!statSync(sessPath).isDirectory()) continue } catch { continue }
+      sessionDirs += 1
+      for (const f of readdirSync(sessPath)) {
+        try { sizes.push(statSync(join(sessPath, f)).size) } catch { /* 跳过 */ }
       }
-    } catch { /* 跳过 */ }
+    }
   }
   sizes.sort((a, b) => b - a)
-  console.log(`   .dsh/sessions 下 ${dirs.length} 个会话目录 / ${scanned} 个文件`)
+  console.log(`   .dsh/sessions 下 ${workspaceDirs} 个工作目录 / ${sessionDirs} 个会话目录 / ${sizes.length} 个文件`)
   console.log(`   最大 ${(sizes[0] / 1024).toFixed(0)} KB · 中位 ${(sizes[Math.floor(sizes.length / 2)] / 1024).toFixed(0)} KB`)
   console.log('   → 只能说明存了多少；喂给模型多少由 DSH 决定，需真会话实测')
 } else {

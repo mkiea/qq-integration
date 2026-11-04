@@ -1,0 +1,39 @@
+{
+  "_comment": [
+    "这是 qq-control.json 的脱敏模板（真文件被 .gitignore 忽略，因为里面有 QQ 号与绝对路径）。",
+    "用法：复制成 qq-control.json，把所有 C:\\Users\\<你>\\chat role 换成本机真实路径。",
+    "字段含义见 docs/DEBUG.md 与 control/bin/qq-control.mjs 的 --print-config。",
+    "不确定的先留空：控制台启动时会自己探测（nodeExe / dshBin / pluginRoot 都有自动发现）。"
+  ],
+  "cwd": "C:\\Users\\<你>\\chat role\\qq_chat",
+  "dataDir": "C:\\Users\\<你>\\chat role\\qq_chat",
+  "profile": "web",
+  "nodeExe": "C:\\Users\\<你>\\chat role\\node.exe",
+  "dshBin": "C:\\Users\\<你>\\chat role\\bin.js",
+  "waylayBat": "C:\\Users\\<你>\\chat role\\rin-waylay.bat",
+  "waylayUin": "",
+  "ttsBat": "C:\\Users\\<你>\\chat role\\启动语音服务.cmd",
+  "pluginRoot": "",
+  "logs": {
+    "hostOut": "C:\\Users\\<你>\\chat role\\qq-host-out.log",
+    "hostErr": "C:\\Users\\<你>\\chat role\\qq-host-err.log",
+    "bridge": "C:\\Users\\<你>\\chat role\\qq-bridge-debug.log",
+    "trace": "C:\\Users\\<你>\\chat role\\qq-trace.jsonl",
+    "audit": "C:\\Users\\<你>\\chat role\\qq-actions.log",
+    "runtime": "C:\\Users\\<你>\\chat role\\qq-runtime.json",
+    "inbox": "C:\\Users\\<你>\\chat role\\qq-inbox.jsonl",
+    "inject": "C:\\Users\\<你>\\chat role\\qq-inject.jsonl"
+  },
+  "extraDirs": [],
+  "ports": {
+    "control": 8880,
+    "host": 3080,
+    "onebot": 6700,
+    "waylay": 13000,
+    "tts": 8977
+  },
+  "token": "",
+  "dataRoot": "C:\\Users\\<你>\\chat role\\qq_chat",
+  "dataDirSource": "config",
+  "patchFile": "C:\\Users\\<你>\\chat role\\cordis.patch.yml"
+}

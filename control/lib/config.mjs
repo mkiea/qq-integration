@@ -26,7 +26,7 @@ export const PORT_LABELS = {
   control: '控制台（独立进程，不依赖 dsh）',
   host: 'DSH 宿主（机器人控制台）',
   onebot: 'OneBot 反向 WS（桥监听）',
-  waylay: 'Waylay 控制台（二维码 / 状态）',
+  waylay: 'Waylay 控制台（仅用 Waylay 时出现；接 NapCat 等实现时这一行空着是正常的）',
   tts: '本地语音（edge-tts）',
 }
 

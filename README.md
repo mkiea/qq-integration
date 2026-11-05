@@ -637,6 +637,10 @@ ws://127.0.0.1:6700/
 
 其它实现同理（LLOneBot 填反向 WebSocket、OpenShamrock 填被动 WebSocket、go-cqhttp 填 `ws-reverse`）。若本插件配了 `accessToken`，OneBot 端填同一 token。
 
+> **桥是标准 OneBot 11 的「反向 WS 服务端」，Waylay 只是默认，不是唯一。**
+> 接 NapCat / LLOneBot / OpenShamrock / Lagrange / go-cqhttp 的三步走、
+> 以及「接 NapCat 时控制台 13000 那行空着是正常的」，见 [docs/ONEBOT-COMPAT.md](docs/ONEBOT-COMPAT.md)。
+
 ### Waylay 启动/停止与排障
 
 **机器人在线只要求被注入的那个 QQ 反过来连 6700**，不要求你能从这里启动它——但登录/扫码那一步通常得把 Waylay 拉起来。

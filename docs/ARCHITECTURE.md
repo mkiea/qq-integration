@@ -10,22 +10,43 @@
 | 进程 | 是什么 | 端口 | 谁监听 |
 |---|---|---|---|
 | **QQ.exe**（8 个进程） | 官方 NTQQ，机器人账号登在这里 | — | — |
-| **NapCat**（在 QQ 进程内） | DLL 注入的 OneBot 实现，**不是独立程序** | — | — |
+| **Waylay**（注入进 QQ 进程） | **项目内置的 OneBot 实现**（`waylay-src/`），替换了 NapCat 的协议层 | — | — |
 | **DSH 宿主**（Electron） | DeepSeek Harness，插件运行的地方 | **3080** | 它自己 |
 | **桥**（插件） | `lib/bridge.js`，跑在 DSH 里，**不是独立进程** | **6700** | **桥**（反向 WS 的**服务端**） |
 | **控制台**（node） | 独立进程，不依赖 DSH | **8880** | 它自己 |
 | 本地 TTS（Python） | edge-tts 逐句合成，按需启动 | 8977 | 它自己 |
 | Waylay 控制台 | 扫码登录页，可选 | 13000 | 它自己 |
 
+### 注入链是三层，别混成一件事
+
+```
+① 注入通道：NapCatWinBootMain.exe + NapCatWinBootHook.dll + qqnt.json
+             ⚠️ 当前仍借用 NapCat 的文件（rin-launch.bat 里 NAPCAT_DIR 写死在
+                C:\Users\SolimPurmiss\Desktop\NapCat\shell）
+             ⚠️ 与"面向公开"冲突：公开项目不能依赖一个第三方整合包
+             → **待剥离**（未实现，别当成已完成）
+
+② 协议层：waylay-src/（bridge.js + listener + qq-profiles）
+             ✅ 项目内置，替换掉的正是 NapCat 的 OneBot 实现
+             是本地打过补丁的副本（见 waylay-src/PATCHES.md，覆盖会冲掉改动）
+
+③ 业务层：lib/bridge.js（13384 行）
+             我们的插件，跑在 DSH 里
+```
+
+注入原理：`NapCatWinBootHook.dll` 读 `NAPCAT_PATCH_PACKAGE` 当模板、`NAPCAT_MAIN_PATH`
+当目标，把 `package.json` 的 `main` **在内存里**改成 `RIN_WAYLAY_ENTRY`（指向 `waylay-src/index.js`）——
+磁盘不动，所以 QQ 的完整性校验不会触发。
+
 ### 最容易误解的一点
 
-**6700 是桥在监听，NapCat 主动连上来**（反向 WebSocket 的语义）。
+**6700 是桥在监听，Waylay 主动连上来**（反向 WebSocket 的语义）。
 
 ```
-NapCat（QQ 进程内）──主动连接──▶ 桥（DSH 插件，:6700）
+Waylay（QQ 进程内）──主动连接──▶ 桥（DSH 插件，:6700）
 ```
 
-不是"NapCat 提供服务、桥去连它"。`netstat` 里 6700 的 LISTENING 属于 `node.exe`（桥），
+不是"Waylay 提供服务、桥去连它"。`netstat` 里 6700 的 LISTENING 属于 `node.exe`（桥），
 `ESTABLISHED` 那条也由桥持有。
 
 ### 第二个易误解点
@@ -40,12 +61,12 @@ NapCat（QQ 进程内）──主动连接──▶ 桥（DSH 插件，:6700）
 
 ```
 ① 退出 QQ（托盘也退）
-② 跑 _tmp\rin-inject\rin-launch.bat     ← 注入 NapCat，6700 才出现
+② 跑 _tmp\rin-inject\rin-launch.bat     ← 注入 Waylay，6700 才出现
 ③ 启动 DeepSeek Harness（桌面端）       ← 3080 + 桥插件
 ④ （可选）启动控制台 control\启动控制台.bat
 ```
 
-**Waylay 不是 DSH 面板里的按钮**，是独立 bat。它做的事：
+**Waylay 不是 DSH 面板里的按钮**，是独立 bat（）。它做的事：
 `NapCatWinBootHook.dll` 读 `NAPCAT_PATCH_PACKAGE` 当模板、`NAPCAT_LOAD_PATH` 当目标，
 把 `package.json` 的 `main` **在内存里**换掉 —— 磁盘不动，所以 QQ 的完整性校验不会触发。
 
@@ -117,7 +138,7 @@ NapCat（QQ 进程内）──主动连接──▶ 桥（DSH 插件，:6700）
 ## 五、五条"我不会再讲错"的事实
 
 1. **桥不是独立进程**，是 DSH 的插件；它死了通常意味着宿主也死了。
-2. **NapCat 不是独立程序**，是注入进 QQ 的 DLL；QQ 一重启就要重新注入。
-3. **6700 由桥监听**，NapCat 是客户端（反向 WS）。
+2. **Waylay 不是独立程序**，是注进 QQ 进程的 JS（借 NapCat 的注入器进去）；**QQ 一重启就要重新注入**——它不是开机自启的。
+3. **6700 由桥监听**，Waylay 是客户端（反向 WS）。
 4. **对话上下文完全在 DSH**，桥只传当前一条消息；桥只做"滚动记忆"（截断+归档，不总结）。
 5. **控制台的 8880 是独立进程**，它能活着而宿主已经死了——这时页面能打开但没数据。

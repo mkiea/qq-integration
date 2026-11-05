@@ -397,6 +397,236 @@ profile 的 `cordis.patch.yml` 覆盖 `id: dsh-qq-onebot-bridge` 的 config（�
 | `injectDryRun` | `true` | **强烈建议保持 `true`**：注入触发的所有出站调用（发消息/撤回/群管…）都被拦截并计数，绝不真发 QQ；**异步 agent 回合的回复同样被拦下**（原文记进事件流） |
 | `injectIntervalMs` | `2000` | 注入队列轮询间隔（毫秒，最小 500） |
 
+
+### 完整配置参考（自动生成，2026-11-05）
+
+> 上表只放"日常会动"的项。**这一节是 schema 里的全部剩余项**，默认值从代码读，
+> 说明保留 schema 原文（英文）—— 不做机器翻译，避免翻出"看着通顺但含义漂移"的中文。
+>
+> 由 `tools/gen-config-reference.mjs` 生成；改 schema 后重跑即可，别手改这一节。
+> 示例里的号码一律用占位（`100000001` / `2000000001`），与真实账号无关。
+
+#### 主动通道（proactive）（9 项）
+
+| 键 | 默认 | 说明（schema 原文） |
+|---|---|---|
+| `oneSentencePerMessage` | `true` | Split each reply into one-sentence messages, sent one after another with a short typing delay. Real people do not type two paragraphs at once - they reply on... |
+| `oneSentenceMaxParts` | `3` | Max messages one reply may be split into (default 3). Anything beyond is merged into the last one so it never turns into a wall of bubbles. |
+| `oneSentenceMinChars` | `1` | Fragments shorter than this are merged back into the previous sentence. Default 1 = never merge, so a bare "嗯。" or "好。" can be its own message - real people ... |
+| `proactiveEnabled` | `false` | Proactive channel (default OFF): a scheduler reads cwd/bio-clock.mjs and, when the clock says it is a good moment, opens a turn of its own so the character c... |
+| `proactiveDryRun` | `true` | Proactive channel dry-run (default ON): decide and log what would be said, but never open a turn and never send. Turn this off only after reading a few days ... |
+| `proactiveTickSeconds` | `60` | How often the proactive scheduler re-evaluates (seconds). One evaluation per chat per tick; the decision itself comes from bio-clock.mjs. |
+| `proactiveStateFile` | 空 | Where per-chat proactive state lives (empty = cwd/qq-proactive-state.json). State is kept per chat key, so one chat quota never eats another chat quota. |
+| `proactiveBioClockFile` | 空 | Path to the bio-clock module (empty = cwd/bio-clock.mjs). It must export decide(state, now, config, lastUserAt). |
+| `proactiveUsers` | `[]` | Who the character may ping on her own (QQ user ids). Empty = every private chat that has a session, as long as it still passes allowUsers. Groups are never i... |
+
+#### 群运营（groupOps / ops）（19 项）
+
+| 键 | 默认 | 说明（schema 原文） |
+|---|---|---|
+| `groupOpsEnabled` | `false` | Group operations toolbox (default OFF): native group check-in, @all quota, mute list, batch kick, group todos, group profile, file organisation, album upload... |
+| `nativeSignEnabled` | `false` | Enable /群打卡: the REAL QQ group check-in (set_group_sign), separate from the local streak game behind /签到. |
+| `opsReadEnabled` | `true` | Enable the read-only ops queries once groupOpsEnabled is on: /全体余量, /禁言名单, /群资料, /入群通知. |
+| `opsKickEnabled` | `false` | Enable /批量踢 (set_group_kick_members, admin, batch confirm) — kicks several members in one native call. |
+| `opsKickBatchSize` | `20` | How many members one batch-kick request carries (larger lists are split, never truncated). |
+| `opsTodoEnabled` | `false` | Enable group todos: /待办, /完成待办, /取消待办 on a quoted message (set/complete/cancel_group_todo). |
+| `opsFileEnabled` | `false` | Enable file organisation: /移动文件, /重命名文件, /删文件, /新建文件夹 (move/rename/delete_group_file, create_group_file_folder). Destructive, so it is off by default and adm... |
+| `opsAlbumUploadEnabled` | `false` | Enable /传图: upload a quoted image into a group album (upload_image_to_qun_album). |
+| `opsProfileEnabled` | `false` | Enable group profile edits: /群名 and /群备注 (set_group_name, set_group_remark). Admin only. |
+| `opsPolicyEnabled` | `false` | Enable join/speak policy: /成员权限 (set_group_member_permissions, partial update) and /历史可见 (set_group_new_member_history_visibility). Admin only. |
+| `opsAdminEnabled` | `false` | Enable /设管理 and /撤管理 (set_group_admin). Needs groupOpsEnabled. The enable flag is ALWAYS sent explicitly: the probe showed NapCat treats a missing enable as ... |
+| `opsInvitePolicyEnabled` | `false` | Enable /邀请策略 (set_group_member_invite_policy) with the four documented values: disabled / require_approval / no_approval / no_approval_under_100. Needs group... |
+| `opsAddOptionEnabled` | `false` | Enable /加群方式 (set_group_add_option). Needs groupOpsEnabled. add_type is a raw QQ number with NO documented enum, so /群搜索 (no_*_finger_open) is deliberately n... |
+| `requestSyncEnabled` | `false` | Enable /申请: actively pull pending join requests (get_group_system_msg) and doubtful friend requests (get_doubt_friends_add_request) into the approval queue, ... |
+| `requestSyncCount` | `50` | How many notifications /申请 pulls per call. Capped at 100 on purpose: NapCat resolves an approval flag by searching only the newest 100 notifications (set_gro... |
+| `adminWatchEnabled` | `false` | Watch group_admin notices: tell the chat when the bot gains or loses group admin. The known state is tracked either way, so write commands can report "I am n... |
+| `opsReportEnabled` | `false` | Enable /周报 and the ops counters that feed it (messages, joins, leaves, kicks, mutes, sign-ins, reactions). |
+| `opsReportDays` | `7` | Window of /周报 in days. |
+| `opsCountersFile` | 空 | Where the ops counters for /周报 are persisted (empty = cwd/qq-ops.json). |
+
+#### 互动（engage / poke / 表情回应 / 点赞）（18 项）
+
+| 键 | 默认 | 说明（schema 原文） |
+|---|---|---|
+| `engageEnabled` | `false` | Interaction pack (default OFF): poke back, typing status, emoji reactions, profile likes and mark-as-read. Every sub-switch below must also be on. |
+| `pokeBackEnabled` | `false` | Poke back with a REAL poke action (group_poke / friend_poke) instead of only replying with text. |
+| `pokeBackText` | 空 | Optional line sent together with the poke-back (empty = poke only, no message). |
+| `pokeCommandEnabled` | `false` | Allow the admin command /戳 <@user\|QQ号> to poke someone on purpose (rate limited per hour). |
+| `pokePerHour` | `5` | Hard cap of outgoing pokes per chat per hour. |
+| `typingEnabled` | `false` | Show a "typing" status in PRIVATE chats while the model is working (set_input_status; the probe showed NapCat has no group equivalent). |
+| `emojiLikeEnabled` | `false` | React to incoming messages with an emoji (set_msg_emoji_like) instead of sending text. |
+| `emojiLikeId` | `128077` | Which emoji to react with: decimal unicode code point (128077 = 👍). |
+| `emojiLikeMentionOnly` | `true` | Only react when the bot was mentioned or quoted, so the group stays quiet. |
+| `emojiLikePerHour` | `20` | Hard cap of emoji reactions per chat per hour. |
+| `reactionStatsEnabled` | `false` | Record group emoji reactions (notice group_msg_emoji_like) and expose /赞榜 and /谁赞了. |
+| `reactionStatsFile` | 空 | Where reaction statistics and interaction quotas are persisted (empty = cwd/qq-engage.json). |
+| `sendLikeEnabled` | `false` | Allow /点赞 [@user\|QQ号] to send QQ profile likes (default OFF). |
+| `sendLikeTimes` | `10` | How many likes one /点赞 sends (the QQ client caps this at 10). |
+| `sendLikePerDay` | `3` | Hard cap of /点赞 per target per day. |
+| `markReadEnabled` | `false` | Mark incoming chats as read (mark_group_msg_as_read / mark_private_msg_as_read) so the account stops showing unread badges. |
+| `markReadPerMinute` | `10` | Hard cap of mark-as-read calls per minute (NapCat marks a whole chat, not a single message). |
+| `funEnabled` | `false` | Master switch for the fun pack (default OFF): fortune / dice / mini-games are shipped and stay configurable, but none of them answers until this is on. Once ... |
+
+#### 视频与图片帧（15 项）
+
+| 键 | 默认 | 说明（schema 原文） |
+|---|---|---|
+| `cardVideoWatchEnabled` | `false` | When a shared card links to a video site (Bilibili/Douyin/Weibo/YouTube...), download the first cardVideoSeconds and show her a few extracted frames, so she ... |
+| `cardVideoSeconds` | `60` | How many seconds of the video to pull for frame extraction (default 60). Longer = slower and bigger; frames are what she sees, not the video. |
+| `cardVideoFrames` | `4` | How many still frames to extract and attach (default 4). These are pictures, not the video: motion, sound and causality are still missing. |
+| `cardVideoTimeoutMs` | `45000` | Total time budget for fetching one video card, in milliseconds (default 45000); it is split across two attempts. While this runs she cannot speak at all, so ... |
+| `cardVideoMaxHeight` | `720` | Upper bound on the video resolution to download for frame extraction (default 720). This matters more than frame count: at 360p the burned-in subtitles and o... |
+| `cardVideoSpeechEnabled` | `true` | Transcribe the audio track of the downloaded clip and give her the words as well as the frames (default on). This is usually the bigger half: a 4-still summa... |
+| `cardVideoSpeechSegments` | `6` | For LONG videos, how many audio samples to transcribe across the WHOLE timeline (default 6, 0 = only transcribe the opening clip). A 16-minute video cannot b... |
+| `videoFrameEnabled` | `true` | When the user sends or quotes a video, download it and extract a few still frames via ffmpeg, then attach them as native images. Frames are stills, not the v... |
+| `videoFrames` | `4` | Base number of frames to pull out of a video (evenly spaced, starting at 5% so the first frame is rarely a black leader). Longer videos scale up toward video... |
+| `videoFramesMax` | `9` | Upper bound for adaptive frame extraction (see videoFrames). Longer videos get more frames, never more than this. |
+| `videoMaxBytes` | `31457280` | Largest video the bridge will download for frame extraction (bytes, default 30 MiB). Checked against Content-Length first and the real byte count after, sinc... |
+| `videoSpeechEnabled` | `true` | Also transcribe the audio track of a video the user sends or quotes, and give her the words alongside the stills (default on). Frames alone answer "what is o... |
+| `videoSpeechSeconds` | `120` | How many seconds of the video audio to transcribe (default 120). Only the beginning is taken on purpose: a 40-minute screen recording would turn into tens of... |
+| `gifFrameExtract` | `true` | Extract the first frame of GIF images via ffmpeg into PNG before handing them to the vision path (animated stickers become stably viewable). |
+| `ffmpegPath` | `ffmpeg` | Path to the ffmpeg executable for GIF frame extraction (empty PATH name is fine when ffmpeg is on PATH). |
+
+#### 内容与卡片（B站 / 卡片解析 / 红包）（10 项）
+
+| 键 | 默认 | 说明（schema 原文） |
+|---|---|---|
+| `ytDlpPath` | 空 | Absolute path to a yt-dlp executable. Empty = auto-detect (PATH, then `<python> -m yt_dlp`). |
+| `ytDlpPython` | 空 | If yt-dlp is installed inside a specific Python environment rather than on PATH, put that python.exe here (e.g. .../envs/train-gpu/Scripts/python.exe). The b... |
+| `redPacketNotice` | `true` | When a red packet / lucky money card shows up in an allowed chat, private-message the admin so they can open it themselves. The bridge does NOT grab it: OneB... |
+| `redPacketNoticeInGroup` | `false` | Also say one short line in the group when a red packet arrives ("I am not grabbing it, you go first"). Off by default: the admin DM is enough, and a bot that... |
+| `groupImageView` | `true` | In groups, do the same for an image the bot was @-mentioned with. Kept as its own switch rather than folded into privateImageView so the two can be turned of... |
+| `qqMediaCacheRoots` | `[]` | Where QQ keeps its local media cache (the nt_qq/nt_data directories), used as the last-resort source for received images. Leave empty to auto-detect from the... |
+| `cardLookEnabled` | `true` | Look up QQ card / mini-program messages by their title to recover the page behind them (Bilibili only for now): fills in uploader, duration, counts, descript... |
+| `cardLookTimeoutMs` | `6000` | Per-request timeout for the card lookup (search, details, thumbnail). The whole chain is fail-soft: on timeout the message falls back to the title line and t... |
+| `webSearchHintEnabled` | `true` | Tell the agent, in its system prompt, that it may use the host web_search tool when it genuinely does not know a meme / slang word / news event, instead of g... |
+| `biliCookie` | 空 | Optional Bilibili login cookie (the whole Cookie header from a logged-in browser, containing at least SESSDATA). Leave empty to use an anonymous guest identi... |
+
+#### 播报与推送（webhook / broadcast / notify）（12 项）
+
+| 键 | 默认 | 说明（schema 原文） |
+|---|---|---|
+| `webhookEnabled` | `false` | Inbound webhook receiver (default OFF): an HTTP endpoint on 127.0.0.1 turns external events (GitHub, Uptime Kuma, any JSON service) into messages in a config... |
+| `webhookPort` | `8798` | Port of the inbound webhook receiver (bound to 127.0.0.1 only). |
+| `webhookSources` | `generic` | Path segment: POST /hook/<name>. |
+| `webhookRatePerMinute` | `30` | Per-source rate limit of the webhook receiver. |
+| `webhookMaxBodyBytes` | `65536` | Max accepted webhook body size (larger requests are refused with 413). |
+| `broadcastEnabled` | `false` | Scheduled broadcasts (default OFF): push RSS feeds, weather or Minecraft status into a chat on a timer. |
+| `broadcastJobs` | 空 | Job id, used by /播报 测试 <id>. |
+| `broadcastStateFile` | 空 | Where broadcast dedupe/statistics are persisted (empty = cwd/qq-broadcast.json). |
+| `notifyEnabled` | `false` | Status push notifications (default OFF): the host pushes bot online/offline events to a push service (PushPlus or any JSON webhook) without going through QQ,... |
+| `notifyPushUrl` | 空 | Push endpoint URL (defaults to PushPlus http://www.pushplus.plus/send when empty but notifyToken is set; can be any JSON webhook). |
+| `notifyToken` | 空 | PushPlus token (or the token field of a custom webhook payload). |
+| `notifyCooldownSeconds` | `300` | Min seconds between status notifications (anti-flood for flapping connections). |
+
+#### 自愈（autoHeal）（4 项）
+
+| 键 | 默认 | 说明（schema 原文） |
+|---|---|---|
+| `autoHealEnabled` | `false` | Auto-heal (default OFF): when the OneBot client disconnects, launch the configured command again. It only ever STARTS a process, never kills one. |
+| `autoHealCommand` | 空 | Command auto-heal runs to bring the QQ client back (e.g. the NapCat launcher path/script). |
+| `autoHealCooldownSeconds` | `300` | Minimum seconds between two auto-heal attempts. |
+| `autoHealMaxPerHour` | `3` | Hard cap of auto-heal attempts per hour. |
+
+#### 安全与出网（11 项）
+
+| 键 | 默认 | 说明（schema 原文） |
+|---|---|---|
+| `allowBrowserOrigin` | `false` | Allow OneBot WebSocket connections that carry a browser Origin header. DEFAULT OFF on purpose: a browser ALWAYS attaches Origin to a WebSocket handshake, and... |
+| `outboundRedactMode` | `decoy` | Outbound DLP for secrets/credentials (2026-10-29). One of: off \| monitor \| redact \| decoy (default) \| block. off = no scan; monitor = log hits only, text unc... |
+| `outboundRedactCanary` | 空 | Optional canary string placed inside your system prompt. If it shows up in an outbound message, the system prompt was leaked verbatim — always redacted, in e... |
+| `egressAllowHosts` | `[]` | Extra host suffixes the bridge may fetch from (QQ media CDNs and localhost are allowed by default). QQ message payloads carry image/voice/file URLs that are ... |
+| `linkReadAllowAnyHost` | `true` | Let the qq_read_link tool fetch ANY public domain (default on). This is what makes 「她把用户分享的链接读一遍」work — a link someone shares is by definition a site not on ... |
+| `taintDryRunEnabled` | `false` | EXPERIMENTAL (v0.7.4): when an inbound message looks like a prompt-injection instruction ("ignore previous instructions", "print your system prompt", …), mar... |
+| `taintWindowMinutes` | `30` | How long the taint window lasts after an injection-looking message (minutes). Only used when taintDryRunEnabled is on. |
+| `fileTransferEnabled` | `true` | In private chats, save files the user sends to cwd/qq-files/ and reply with the local path. |
+| `fileTransferMaxBytes` | `52428800` | Max accepted file size for private file transfer (default 50 MiB). |
+| `fileTransferInlineMaxBytes` | `4096` | Small TEXT files up to this size get their content pasted directly into her context inside an untrusted-data fence (the agent cannot reliably be assumed to r... |
+| `inboundLocalPathRoots` | `[]` | Directories allowed as a source when an inbound OneBot file segment carries an ABSOLUTE local path. Empty (default) = refuse all of them: real traffic never ... |
+
+#### 记忆与摘要（3 项）
+
+| 键 | 默认 | 说明（schema 原文） |
+|---|---|---|
+| `memoryArchiveEntries` | `400` | Overflow lines older than memoryMaxEntries are archived here (per chat) instead of being dropped. The newest 20 archived lines are injected with an "(older)"... |
+| `groupMemoryPerSpeaker` | `6` | When injecting group memory, keep at most this many recent messages PER SPEAKER (default 6). Without it one talkative member buried everyone else. |
+| `summaryEnabled` | `true` | Enable /summary: the agent summarizes the chat's persisted conversation. |
+
+#### 管理与权限（4 项）
+
+| 键 | 默认 | 说明（schema 原文） |
+|---|---|---|
+| `botQqAllowed` | `[]` | Allowlisted QQ ids that may act as the bot itself. Empty = no restriction (legacy behaviour). When non-empty, logging in with any other account makes the bri... |
+| `adminUsers` | `[]` | QQ user ids allowed to run admin commands (/mute /unmute /kick /clear). Kick requires a second confirmation in chat. |
+| `adminUins` | `[]` | DEPRECATED alias for adminUsers, kept only so old patches keep working. Only read as a fallback when adminUsers is empty; adminUsers always wins. |
+| `adminEnabled` | `true` | Master switch for admin commands. |
+
+#### 语音（TTS / STT 补充）（9 项）
+
+| 键 | 默认 | 说明（schema 原文） |
+|---|---|---|
+| `sttLongVoiceChars` | `600` | Voice transcripts longer than this are compressed to the first N characters and marked as truncated (cost + untrusted-volume control), instead of being paste... |
+| `voiceToolEnabled` | `true` | Whether the agent gets the qq_send_voice tool at all (she decides when to speak). Independent of ttsEnabled, which auto-speaks every reply. Turning this off ... |
+| `sttProvider` | `dsh` | Where transcription happens. dsh (default): the host service speechToText from DSH's experimental voice-input bundle - local SenseVoice, nothing leaves the m... |
+| `sttLanguage` | `auto` | Language hint for the DSH local recogniser: auto \| zh \| en \| yue \| ja \| ko (auto lets SenseVoice decide, which also copes with mixed speech). Only used when ... |
+| `ttsAzureRegion` | `eastasia` | Azure Speech region (e.g. eastasia). |
+| `ttsAllowedHosts` | `['api.openai.com']` | Host allowlist for TTS egress. Loopback (127.0.0.1 / localhost / ::1) is always allowed because the local TTS service runs there. Any other host must be list... |
+| `ttsBaseUrl` | `https://api.openai.com/v1` | OpenAI-compatible TTS base URL (used when ttsProvider is openai). |
+| `ttsModel` | `tts-1` | OpenAI-compatible TTS model id. |
+| `ttsVoiceFormat` | `silk` | Container format for outgoing voice messages. silk (default): convert mp3 to SILK locally, because QQ 9.9.36+ stopped transcoding mp3 on its own and would fa... |
+
+#### 历史检索与群资产（v0.5 起）（24 项）
+
+| 键 | 默认 | 说明（schema 原文） |
+|---|---|---|
+| `forwardExpandEnabled` | `true` | Expand merged-forward ("chat record") cards the bot receives: fetch the node list via get_forward_msg and hand the transcript to the agent instead of droppin... |
+| `forwardMaxNodes` | `50` | Max nodes taken from one merged-forward card when expanding it. |
+| `forwardMaxChars` | `4000` | Max characters of an expanded merged-forward transcript handed to the agent. |
+| `forwardImageMax` | `4` | How many images from one expanded merged-forward card are downloaded and attached (default 4, the same budget as the main message path). Raise it when a chat... |
+| `memberQueryEnabled` | `true` | Member queries (read-only): /成员 lists the group roster and /成员 @someone shows one member's card, joined date, level and mute state. |
+| `memberListLimit` | `20` | How many members /成员 lists before truncating. |
+| `friendListEnabled` | `false` | Allow /好友 to list the bot's friends (default OFF: the friend list is private, and it is only accepted in private chats from an admin). |
+| `historyQueryEnabled` | `true` | Expose the qq_recent_history agent tool so the bot can read the last N messages of the current group/private chat (read-only). |
+| `historyQueryLimit` | `20` | How many messages qq_recent_history may fetch per call. |
+| `reactToolEnabled` | `true` | Expose the qq_react agent tool so the bot can attach an emoji reaction to a message (write action: goes through the action gate). |
+| `leaveGroupEnabled` | `false` | Allow the admin command /退群 to make the bot leave a group (default OFF; requires a second confirmation in chat). |
+| `ocrEnabled` | `true` | Image text recognition (read-only): /ocr reads the text out of an image the user sends or quotes (uses the NapCat ocr_image action). |
+| `ocrMaxImages` | `3` | How many images one /ocr call may recognize. |
+| `groupFileEnabled` | `true` | Group file browsing (read-only): /文件 lists the group file list and its folders /文件 <文件夹>. |
+| `groupFileDownloadEnabled` | `true` | Allow /取 <文件名> to download one group file into cwd/qq-files/ and hand it back to the requester in private (never posted into the group). |
+| `groupFileListLimit` | `20` | How many group files /文件 lists before truncating (also caps how many albums /相册 shows). |
+| `groupFileMaxBytes` | `52428800` | Max size /取 will download (bytes, default 50 MiB). |
+| `albumEnabled` | `true` | Group album browsing (read-only): /相册 lists the group albums (NapCat get_qun_album_list). |
+| `historyArchiveEnabled` | `true` | Archive every allowlisted message into cwd/qq-history/YYYY-MM-DD.jsonl, so /找 can search far more history than the rotating qq-inbox.jsonl keeps. Injected/re... |
+| `historyArchiveDir` | 空 | Archive directory (empty = cwd/qq-history). |
+| `historyArchiveKeepDays` | `90` | Days of archived messages kept; older day files are MOVED to the local trash on host start, never deleted. |
+| `historySearchEnabled` | `true` | Enable /找 <keywords> (searches this chat's local archive) and the qq_search_history agent tool. |
+| `historySearchDays` | `7` | How many recent days /找 scans by default. |
+| `historySearchLimit` | `20` | Max hits /找 returns, and the default limit of the qq_search_history tool. |
+
+#### 其他（内部 / 实验性）（18 项）
+
+| 键 | 默认 | 说明（schema 原文） |
+|---|---|---|
+| `allowAllChats` | `false` | Skip the allowlists entirely: answer every private chat and every group (groups still need an @-mention while replyOnlyWhenMentioned is on). Both lists above... |
+| `ignoreSelf` | `true` | Drop messages whose sender is the bot itself. Whether the OneBot end echoes the bot's own messages back varies by implementation and config; without this fil... |
+| `sendIntervalMs` | `400` | Minimum gap in milliseconds between two outgoing chat messages. Her replies are naturally several short segments, and a reply may collide with a proactive me... |
+| `hostStuckWarnMs` | `180000` | After this long without turn/end, log a warning that the host looks stuck (default 180000 = 3 min). A model API outage looks exactly like this: no reply, no ... |
+| `hostStuckAbortMs` | `300000` | After this long, force-cancel the turn and tell the user "I got stuck, I cancelled that turn" (default 300000 = 5 min). Must be larger than hostStuckWarnMs. ... |
+| `quoteReplyEnabled` | `false` | Quote the message being answered (QQ "reply" segment). Off by default: quoting changes how the group reads, and a message id can expire — such failures are r... |
+| `longReplySplitOnPunctuation` | `true` | When a reply exceeds maxMessageLength and has to be split, break at sentence punctuation first (then at commas, and only then mid-word). On by default; turn ... |
+| `extensionToolsEnabled` | `false` | EXPERIMENTAL (v0.7.0): let other plugins in the same host inject agent tools and prompt sections into every session through ctx.qqBridge.registerToolProvider... |
+| `mentionAliases` | `[]` | Names that also count as an @-mention when a QQ client sends the @ as PLAIN TEXT instead of an at-segment (e.g. "@MyBot /help"). The bot learns its own nickn... |
+| `momentImageMaxBytes` | `5 * 1024 * 1024` | Max size of a sticker image attached to a Qzone moment (`!moment --sticker`). Base64 inflates it by ~33%, so keep it modest. |
+| `dataDir` | 空 | ONE folder for everything this plugin owns: sessions, memory, images, voice clips, stats, traces, audit logs and the DLP canary. Empty = same as cwd (so exis... |
+| `ownedWaitPollMs` | `1500` | When the target session is held by another window (usually the web UI), poll for the write lock every N milliseconds (default 1500, floor 100). |
+| `ownedWaitMaxMs` | `600000` | How long to keep waiting for that write lock before giving up and telling the user why (default 600000 = 10 minutes). |
+| `ownedForkAfterMs` | `120000` | While that write lock stays held this long, branch off instead of staying silent: read the history through a read-only handle (which never takes the lock) an... |
+| `voteEnabled` | `true` | Enable group votes: "投票：问题？A 选项 B 选项"; members reply with option letters; /vote /vote-end manage it. |
+| `voteDurationSeconds` | `300` | Default vote duration before results publish. |
+| `todoEnabled` | `true` | Enable shared todos: /todo add\|list\|done\|clear and "记一下：xxx"; stored per chat in cwd/qq-todos/. |
+| `exportEnabled` | `true` | Enable /export: dump this chat's persisted conversation to a markdown file under cwd/qq-exports/. |
+
 ## 用户侧（OneBot 实现）配置
 
 以 NapCat 为例：OneBot11 配置里把 WebSocket 客户端地址填成：

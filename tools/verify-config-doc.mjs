@@ -39,6 +39,8 @@ for (const m of schema.matchAll(re)) {
 
 // ---------- 归一化 ----------
 const norm = (v) => String(v ?? '')
+  // README 把空字符串写成「空」（比 `` 可读），这里认这个词，否则 16 项空默认值会假报不一致
+  .replace(/^空$/, "''")
   .replace(/^['"]|['"]$/g, '')
   .replace(/^\[|\]$/g, '')
   .replace(/\s+/g, '')

@@ -10,32 +10,35 @@
 | 进程 | 是什么 | 端口 | 谁监听 |
 |---|---|---|---|
 | **QQ.exe**（8 个进程） | 官方 NTQQ，机器人账号登在这里 | — | — |
-| **Waylay**（注入进 QQ 进程） | **项目内置的 OneBot 实现**（`waylay-src/`），替换了 NapCat 的协议层 | — | — |
+| **Waylay**（注入进 QQ 进程） | **主方案的 OneBot 实现**（`waylay-src/`，项目内置）；NapCat 只是降级方案 | — | — |
 | **DSH 宿主**（Electron） | DeepSeek Harness，插件运行的地方 | **3080** | 它自己 |
 | **桥**（插件） | `lib/bridge.js`，跑在 DSH 里，**不是独立进程** | **6700** | **桥**（反向 WS 的**服务端**） |
 | **控制台**（node） | 独立进程，不依赖 DSH | **8880** | 它自己 |
 | 本地 TTS（Python） | edge-tts 逐句合成，按需启动 | 8977 | 它自己 |
 | Waylay 控制台 | 扫码登录页，可选 | 13000 | 它自己 |
 
-### 注入链是三层，别混成一件事
+### 注入链：主方案不是 NapCat
 
 ```
-① 注入通道：NapCatWinBootMain.exe + NapCatWinBootHook.dll + qqnt.json
-             ⚠️ 当前仍借用 NapCat 的文件（rin-launch.bat 里 NAPCAT_DIR 写死在
-                C:\Users\SolimPurmiss\Desktop\NapCat\shell）
-             ⚠️ 与"面向公开"冲突：公开项目不能依赖一个第三方整合包
-             → **待剥离**（未实现，别当成已完成）
+主方案  rin-waylay.bat  →  call rin-launch.bat waylay <QQ号>
+                            →  RIN_MODE=waylay
+                            →  加载 waylay-src/index.js（项目内置 OneBot）
+                            →  **NapCat 本体不加载**（6099 不出现，只剩 13000）
 
-② 协议层：waylay-src/（bridge.js + listener + qq-profiles）
-             ✅ 项目内置，替换掉的正是 NapCat 的 OneBot 实现
-             是本地打过补丁的副本（见 waylay-src/PATCHES.md，覆盖会冲掉改动）
+降级    Desktop\NapCat\shell\launcher-user.bat  →  stock NapCat（需要重新登录）
 
-③ 业务层：lib/bridge.js（13384 行）
-             我们的插件，跑在 DSH 里
+探针    rin-launch.bat（无参数）→ RIN_MODE=probe，什么都不加载
 ```
 
-注入原理：`NapCatWinBootHook.dll` 读 `NAPCAT_PATCH_PACKAGE` 当模板、`NAPCAT_MAIN_PATH`
-当目标，把 `package.json` 的 `main` **在内存里**改成 `RIN_WAYLAY_ENTRY`（指向 `waylay-src/index.js`）——
+**唯一共用的东西**：`NapCatWinBootMain.exe`（34 KB）+ `NapCatWinBootHook.dll`（21 KB）
+—— 合计 **55 KB 的注入原语**，只做"把任意 JS 塞进 QQ"这一件事，不属于 NapCat 的 OneBot 实现。
+（主人常说的「56KB injector」指的就是这两个文件。）
+
+> **待剥离的是这个 56 KB hook，不是协议层**。协议层（Waylay）已经是项目内置的。
+> 剥离它 → 公开项目就不含任何 NapCat 产物（未实现，别当成已完成）。
+
+注入原理：hook DLL 读 `NAPCAT_PATCH_PACKAGE` 当模板、`NAPCAT_LOAD_PATH` 当目标，
+把 `package.json` 的 `main` **在内存里**改成 `rin-loader.js` ——
 磁盘不动，所以 QQ 的完整性校验不会触发。
 
 ### 最容易误解的一点

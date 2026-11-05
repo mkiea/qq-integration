@@ -95,7 +95,8 @@ check('每条都有 traceId（端到端可追）', report.results.every((item) =
 check('dry-run 处于开启状态', report.safety.dryRun === true)
 check('没有任何 QQ 连接', report.safety.connectedBots === 0)
 check('cwd 被强制沙箱化', report.safety.sandboxed === true)
-check('没有新增监听端口', portBefore === portAfter, `${portBefore} → ${portAfter}`)
+// 只禁止"新增"：环境里别的服务关门会让端口数减少（实测 1 → 0），那不是回放的锅。
+check('没有新增监听端口', portAfter <= portBefore, `${portBefore} → ${portAfter}`)
 check('源目录文件列表未变', readdirSync(sandboxSource).filter((name) => name !== 'qq-replay').sort().join(',') === before.files, readdirSync(sandboxSource).join(','))
 check('源状态文件字节未变', readFileSync(join(sandboxSource, 'qq-keywords.json'), 'utf8') === before.keywords)
 check('源状态文件时间戳未变', statSync(join(sandboxSource, 'qq-keywords.json')).mtimeMs === before.mtime)

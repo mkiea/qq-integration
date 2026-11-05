@@ -1,3 +1,5 @@
+// 本机这些真端口上可能有服务在跑（3080/6700/8880/13000），关掉 TCP probe 才能测"未监听"分支
+process.env.QQ_CONTROL_NO_PROBE = '1'
 /**
  * Unit + HTTP tests for the standalone control console (no real machine access:
  * every side effect is injected, and the server is exercised with real requests

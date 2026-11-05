@@ -480,7 +480,9 @@ for (const artifact of RUNTIME_ARTIFACTS) {
 if (canJudgeIgnore) {
   check('所有运行产物都被 .gitignore 覆盖（文本判定 + git 交叉核对）', ignoredOk.length === 0, ignoredOk.slice(0, 6).join(', '))
 }
-const trackedArtifacts = tracked.filter((name) => /^qq-/.test(name))
+// \.example.\ 是模板约定（qq-control.example.json）：它本来就该被跟踪，
+// 把它算成运行产物会让'新增一个模板'先撞红两条断言（实测）。
+const trackedArtifacts = tracked.filter((name) => /^qq-/.test(name) && !/\.example\./.test(name))
 check('没有任何运行产物被跟踪/在包里', trackedArtifacts.length === 0, trackedArtifacts.join(','))
 check('qq-control.json 未被跟踪（含控制台 token）', !tracked.includes('qq-control.json'))
 

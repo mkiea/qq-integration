@@ -10,6 +10,7 @@ import { execFile, spawn } from 'node:child_process'
 import { closeSync, existsSync, mkdirSync, openSync, readdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs'
 import { createHash } from 'node:crypto'
 import { request as httpRequest } from 'node:http'
+import { createConnection } from 'node:net'
 import { basename, dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { PORT_LABELS, configWarnings } from './config.mjs'
@@ -148,6 +149,28 @@ export function run(command, args, { timeoutMs = 15000, exec = execFile } = {}) 
   })
 }
 
+
+/**
+ * 真连一下这个端口（不用 netstat）。
+ *
+ * 为什么需要它：`netstat -ano` 在受限进程/应用容器里**看不到别人的监听 socket**，
+ * 实测 DSH 桌面端的 3080 就属于这种 —— netstat 里只有 TIME_WAIT，但 HTTP 有响应。
+ * 只信 netstat 的唯一后果是把活着的服务显示成"未监听"，用户会去重启一个没死的程序。
+ *
+ * 返回 true = 能建立 TCP 连接（不论对端说什么协议）。超时按 false 处理。
+ */
+export function probeTcpReachable(port, timeoutMs = 800) {
+  return new Promise((resolve) => {
+    if (!Number.isInteger(port) || port <= 0) { resolve(false); return }
+    let settled = false
+    const done = (ok) => { if (settled) return; settled = true; try { socket.destroy() } catch { /* 已关 */ }; resolve(ok) }
+    const socket = createConnection({ host: '127.0.0.1', port })
+    socket.setTimeout(timeoutMs)
+    socket.once('connect', () => done(true))
+    socket.once('timeout', () => done(false))
+    socket.once('error', () => done(false))
+  })
+}
 /** Snapshot of ports + processes used by the UI. */
 export async function inspect({ ports, labels = {}, exec } = {}) {
   const [netstat, tasklist] = await Promise.all([
@@ -157,6 +180,21 @@ export async function inspect({ ports, labels = {}, exec } = {}) {
   const rows = parseNetstat(netstat.stdout)
   const tasks = parseTasklist(tasklist.stdout)
   const summary = summarizePorts(rows, tasks, ports, labels)
+  /**
+   * ★ netstat 说"没监听"的，再真连一次（2026-11-05）。
+   * 并行做，最坏多等一个 timeout；连得上就标 `reachable: true`，
+   * 与"netstat 确实看到 LISTENING"区分开 —— 否则下次又看不出是探测降级还是真在监听。
+   */
+  await Promise.all(summary.map(async (item) => {
+    if (item.listening) return
+    // 测试开关：测试环境里这些真端口上本来就有服务在跑，probe 会把 mock 的"未监听"覆盖掉。
+    // 生产不设这个变量 ⇒ 永远走真 probe。
+    const reachable = process.env.QQ_CONTROL_NO_PROBE === '1' ? false : await probeTcpReachable(item.port)
+    if (!reachable) return
+    item.listening = true
+    item.reachable = true
+    item.process = item.process === '' ? '（netstat 不可见）' : item.process
+  }))
   const entries = [...tasks.entries()].map(([pid, name]) => ({ pid, name }))
 
   // v0.8.0：NapCat 加载器判定已随 NapCat 退场。QQ 客户端列表仅作**保护性展示**

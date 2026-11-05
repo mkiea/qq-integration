@@ -3577,3 +3577,79 @@ W①/W⑤ 6 条源码级、V⑥ 6 条（含**loopback 必须放行**这条反向
 `K②/K⑤`（`downloadTo` 只校验首跳 + 无大小上限）、`L①`（入站 `file` 任意绝对路径）、
 `N②/N③/N④/N⑦`（DLP 变形绕过、`!say` 不过 DLP、文件名不扫）、`J②`（空 accessToken）。
 这些是**既有缺口**，不是这轮引入的，且修复面比语音链路更大 —— 留给下一轮排期。
+**⊕³⁹ 修「控制台把活着的主机显示成未监听」（2026-11-05 晨）**
+
+主人：「我重新启动了一下启动器，貌似显示稍微有点问题，你去看看日志和记忆，顺便修修」。
+
+### 现象
+
+重启器之后三个服务其实都起来了：
+
+| 服务 | 直连探测 | 判定 |
+|---|---|---|
+| 3080 DSH | **HTTP 401** | 活着（要 token） |
+| 6700 NapCat | **HTTP 426**（Upgrade Required） | 活着（WS 端点） |
+| 8880 控制台 | **HTTP 200** | 活着 |
+
+但控制台 `/api/status` 把宿主报成：
+
+```json
+{"name":"host","port":3080,"listening":false,"pid":0,"process":""}
+```
+
+⇒ 面板显示"未监听"，用户以为宿主没起。
+
+### 根因（两层）
+
+**第一层：我的探测方式错了。** `curl` 默认走 `http_proxy=http://127.0.0.1:49408`，
+本地服务被代理转发后回 **502**，我一开始据此判断"服务全挂"。
+**必须 `--noproxy '*'`**。同一天里已经因为这件事误判两次（昨晚端口、今早 HTTP）。
+
+**第二层：控制台真的会误报。** `summarizePorts` 只信 `netstat -ano`：
+
+```js
+const listeners = netstatRows.filter(r => r.localPort === port && r.state === 'LISTENING')
+listening: listeners.length > 0
+```
+
+实测 `netstat -ano | grep 3080` **只有一条 TIME_WAIT，没有 LISTENING** ——
+DSH 桌面端的监听 socket 不出现在 netstat 里（应用容器/子进程隔离）。
+**但 HTTP 明明有响应。**
+
+### 修法
+
+`control/lib/supervisor.mjs` 加 `probeTcpReachable(port, timeoutMs = 800)`：
+netstat 说"没监听"时**再真连一次 TCP**，连得上就标 `listening: true` + **`reachable: true`**。
+
+为什么单开 `reachable` 字段：要能区分「netstat 确实看到 LISTENING」与「netstat 看不见但能连」。
+否则下次看到 `true` 就以为 netstat 正常，把真正的探测降级盖掉。
+
+并行 probe，最坏多等一个 timeout。
+
+### 测试
+
+`control-unit` 一开始红了 8 条 —— 全是我的锅：
+这些用例 mock 了 `netstat`/`tasklist`，但 **probe 是真连 TCP**，
+而本机 3080/6700/8880/13000 上都有真服务 ⇒ 假状态被真连接覆盖。
+
+修法不是放宽断言，而是**给测试一个开关**：`process.env.QQ_CONTROL_NO_PROBE === '1'` 时跳过 probe
+（生产不设这个变量 ⇒ 永远走真 probe）。测试文件顶部声明，`control-unit` 恢复到 **153 绿**。
+
+### 验证
+
+用新代码直接跑 `inspect`：
+
+```
+host     3080   listening=true  [probe 救回] proc=（netstat 不可见）
+onebot   6700   listening=true  [probe 救回] proc=（netstat 不可见）
+control  8880   listening=true  [probe 救回] proc=（netstat 不可见）
+waylay   13000  listening=true  [probe 救回] proc=（netstat 不可见）
+botOnline: true | host.running: true
+```
+
+**副作用（已知）**：进程名/PID 会显示「（netstat 不可见）」——沙箱里 netstat 看不到任何真实 socket。
+这是诚实的降级展示，比"未监听"强。
+
+### 生效条件
+
+**控制台是独立进程，要重启它才加载新代码**（`control/启动控制台.bat` 或 `node control/bin/qq-control.mjs`）。

@@ -137,14 +137,24 @@ export function readSetup(target) {
 export function validateSetup(input = {}) {
   const errors = []
   const botQq = Number(input.botQq)
-  if (!Number.isInteger(botQq) || botQq <= 0) errors.push('机器人 QQ 号必须是正整数')
+  /**
+   * 上限 1e10：QQ 号最长 10 位。
+   * 不加这条时 `1e15` 这种也能通过（正整数而已），但它显然不是一个 QQ 号 ——
+   * 鲁棒性测试（test/setup-robust-unit.mjs）就是靠这条才发现的。
+   */
+  const QQ_MAX = 1e10
+  if (!Number.isInteger(botQq) || botQq <= 0 || botQq >= QQ_MAX) {
+    errors.push(`机器人 QQ 号必须是 1~10 位数字（收到 ${String(input.botQq).slice(0, 20)}）`)
+  }
 
   const usersParsed = parseList(input.allowUsers)
   if (!usersParsed.ok) errors.push(`白名单：${usersParsed.reason}`)
   else if (usersParsed.list.length === 0) errors.push('白名单不能为空 —— 空列表意味着所有私聊都会被拒绝')
+  else if (usersParsed.list.some((n) => n >= QQ_MAX)) errors.push('白名单里有超过 10 位的号码')
 
   const groupsParsed = parseList(input.allowGroups)
   if (!groupsParsed.ok) errors.push(`群白名单：${groupsParsed.reason}`)
+  else if (groupsParsed.list.some((n) => n >= QQ_MAX)) errors.push('群白名单里有超过 10 位的号码')
   const cwd = String(input.cwd ?? '').trim()
   if (cwd && !isAbsolute(cwd)) errors.push('数据目录要写绝对路径（例如 C:\\qq-data）')
 

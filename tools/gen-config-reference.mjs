@@ -11,8 +11,10 @@
  * 用法：node tools/gen-config-reference.mjs [--write]
  */
 import { readFileSync, writeFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 
-const ROOT = 'C:/Users/SolimPurmiss/Desktop/chat role/qq-integration'
+// 从模块位置推根目录（原来写死绝对路径，既换不了机器也会被 privacy 判成家目录泄露）
+const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const schema = readFileSync(`${ROOT}/lib/index.js`, 'utf8')
 const readme = readFileSync(`${ROOT}/README.md`, 'utf8')
 
@@ -105,6 +107,12 @@ for (const [name, arr] of buckets) {
     wrote += 1
   }
   lines.push('')
+}
+
+if (wrote === 0) {
+  // 已经全补过了：不追加空节（否则每次重跑都往 README 里塞一段"0 项"的标题）
+  console.log('README 已覆盖全部 schema 项，无需追加')
+  process.exit(0)
 }
 
 const block = lines.join('\n')

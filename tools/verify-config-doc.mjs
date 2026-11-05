@@ -10,8 +10,10 @@
  * 用法：node tools/verify-config-doc.mjs
  */
 import { readFileSync } from 'node:fs'
+import { fileURLToPath } from 'node:url'
 
-const ROOT = 'C:/Users/SolimPurmiss/Desktop/chat role/qq-integration'
+// 从模块位置推根目录（原来写死绝对路径，换台机器就跑不了）
+const ROOT = fileURLToPath(new URL('..', import.meta.url))
 const readme = readFileSync(`${ROOT}/README.md`, 'utf8')
 const schema = readFileSync(`${ROOT}/lib/index.js`, 'utf8')
 

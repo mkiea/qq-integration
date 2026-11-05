@@ -18,8 +18,8 @@
 
 ```
 29800  NapCatWinBootMain.exe  ← 注入原语
-       参数：QQ.exe + NapCatWinBootHook.dll -q 3753306415
-  └ 33264  QQ.exe -q 3753306415   ← 被注入的 QQ（机器人号）
+       参数：QQ.exe + NapCatWinBootHook.dll -q 375****415
+  └ 33264  QQ.exe -q 375****415   ← 被注入的 QQ（机器人号）
        加载模块里只有 NapCatWinBootHook.dll（21 KB），没有 napcat.mjs
        └ Waylay（waylay-src/index.js）在进程内跑
             │ Reverse WS 127.0.0.1:63553 → 6700

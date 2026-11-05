@@ -341,7 +341,7 @@ profile 的 `cordis.patch.yml` 覆盖 `id: dsh-qq-onebot-bridge` 的 config（�
 | `imageTrashEnabled` | `true` | **删除策略：只回收不销毁**——过期图片移动到 `cwd/qq-trash/<日期>/` 而不是删除（失败则保留原文件） |
 | `imageTrashDir` | `''` | 回收目录（空=`cwd/qq-trash`）；该目录**不会自动清理**，由你自行处理（本机可 `scripts/safe-delete.ps1` 送进回收站） |
 | `memoryEnabled` | `true` | 每会话持久化记忆（最近对话存 `cwd/qq-memory/`，宿主重启后自动恢复；`/new` 清除） |
-| `memoryMaxEntries` | `30` | 每个会话保留的对话条数上限 |
+| `memoryMaxEntries` | `60` | 每个会话保留的对话条数上限 |
 | `rateLimitEnabled` | `false` | 回复限流开关（默认关闭）；开启后每会话窗口内最多回复 `rateLimitMaxReplies` 条 |
 | `rateLimitMaxReplies` | `10` | 限流窗口内每会话最大回复数 |
 | `rateLimitWindowSeconds` | `60` | 限流滑动窗口（秒） |
@@ -367,7 +367,7 @@ profile 的 `cordis.patch.yml` 覆盖 `id: dsh-qq-onebot-bridge` 的 config（�
 | `pokeEnabled` | `true` | 戳一戳回复开关（白名单会话内被戳随机卖萌回复） |
 | `pokeReplies` | `[...]` | 戳一戳回复文案列表（随机选一条） |
 | `pokeCooldownSeconds` | `15` | 每会话戳一戳回复最小间隔（秒，防刷） |
-| `voiceReadingEnabled` | `true` | 语音朗读：@机器人引用文字说「读一下/念出来」，或 `/读 <文字>`（走 ttsProvider 合成） |
+| `voiceReadingEnabled` | `false` | 语音朗读：@机器人引用文字说「读一下/念出来」，或 `/读 <文字>`（走 ttsProvider 合成） |
 | `checkinEnabled` | `false` | 每日签到（**默认关闭**）：说「签到」打卡，连续/累计天数存 `cwd/qq-checkin/`；「签到榜」看排行 |
 | `checkinKeyword` | `签到` | 签到触发词 |
 | `welcomeEnabled` | `false` | 入群欢迎语（**默认关闭**）：新人进群自动 @+欢迎文案（机器人自己入群不触发） |

@@ -15,9 +15,11 @@ import { createServer } from 'node:http'
 import { readFileSync, statSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
+import { dirname } from 'node:path'
 import { tailLines } from './supervisor.mjs'
 import { detectStale } from './staleness.mjs'
-import { FREEABLE_PORTS } from './config.mjs'
+import { FREEABLE_PORTS, detectPaths } from './config.mjs'
+import { detectTarget, readSetup, writeSetup, validateSetup, SETUP_FIELDS } from './config-target.mjs'
 import { buildScenario, listScenarios } from './scenarios.mjs'
 import { diffReplays } from './replaydiff.mjs'
 
@@ -193,6 +195,31 @@ export function createControlHandler({ config, token, api, ui = '', uiFile = '',
     }
 
     try {
+      // ---- 首次配置向导：探测落点 + 读当前值（宿主无关）----
+      if (request.method === 'GET' && path === '/api/setup/target') {
+        const paths = detectPaths(config)
+        const profileDir = paths.patchFile ? dirname(paths.patchFile) : ''
+        const target = detectTarget({ profileDir, dataDir: paths.dataDir })
+        json(response, 200, {
+          ok: true,
+          target: { kind: target.kind, path: target.path, label: target.label },
+          fields: SETUP_FIELDS,
+        })
+        return
+      }
+      if (request.method === 'GET' && path === '/api/setup/read') {
+        const paths = detectPaths(config)
+        const profileDir = paths.patchFile ? dirname(paths.patchFile) : ''
+        const target = detectTarget({ profileDir, dataDir: paths.dataDir })
+        json(response, 200, {
+          ok: true,
+          target: { kind: target.kind, path: target.path, label: target.label },
+          fields: SETUP_FIELDS,
+          values: readSetup(target),
+        })
+        return
+      }
+
       if (request.method === 'GET' && path === '/api/status') {
         json(response, 200, { ok: true, ...(await api.status()), build: build() })
         return
@@ -605,6 +632,15 @@ export function createControlHandler({ config, token, api, ui = '', uiFile = '',
           '/api/personas/archive': () => {
             if (typeof api.personaArchiveCurrent !== 'function') return { ok: false, reason: '当前控制台版本不支持收进人设库' }
             return api.personaArchiveCurrent(typeof body.name === 'string' ? body.name : '')
+          },
+          // ---- 首次配置向导：写入（GET 的两条在文件上方，走逐条 if）----
+          '/api/setup/write': () => {
+            const paths = detectPaths(config)
+            const profileDir = paths.patchFile ? dirname(paths.patchFile) : ''
+            const target = detectTarget({ profileDir, dataDir: paths.dataDir })
+            const checked = validateSetup(body)
+            if (!checked.ok) return { ok: false, reason: checked.errors.join('；'), errors: checked.errors }
+            return writeSetup(target, checked.values)
           },
           '/api/config': () => {
             if (typeof saveConfig !== 'function') return { ok: false, reason: '配置保存不可用' }

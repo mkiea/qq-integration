@@ -274,6 +274,20 @@
         </div>
       </div>
     </section>
+
+    <section class="card" style="grid-column:1/-1" id="card-setup">
+      <h2>首次配置 <span class="meta" id="setupTarget">（探测中…）</span></h2>
+      <div class="meta" style="margin-bottom:10px">
+        只填一次。保存后写到上面显示的那个文件里 —— 落到哪个文件由<strong>宿主决定</strong>，
+        向导本身不假设是 DSH（将来换自研宿主，这一页不用改）。
+      </div>
+      <div id="setupFields"></div>
+      <div class="row" style="margin-top:12px">
+        <button class="primary" id="setupSave" onclick="saveSetup()">保存配置</button>
+        <button onclick="loadSetup()">重新读取</button>
+        <span id="setupMsg" class="meta"></span>
+      </div>
+    </section>
   </details>
 
   <details class="group" id="gOverview" open>
@@ -731,6 +745,69 @@ function api(path, options = {}) {
     .then((r) => r.json())
     .then((data) => { done(); return data; }, (error) => { done(); throw error; });
 }
+// ---------------- 首次配置向导（宿主无关：字段来自 lib/panel.js，落点来自 /api/setup/target）
+let setupFieldsCache = [];
+
+function setupInputValue(key, values) {
+  const v = values[key];
+  if (Array.isArray(v)) return v.join(', ');
+  return v == null ? '' : String(v);
+}
+
+function renderSetup(form, fields, values) {
+  form.innerHTML = fields.map((f) => {
+    const val = setupInputValue(f.key, values);
+    const required = f.required ? ' <span style="color:var(--danger,#c00)">*</span>' : '';
+    return (
+      '<label style="display:block;margin:10px 0">' +
+      '<span style="display:block;font-weight:500;margin-bottom:4px">' + f.label + required + '</span>' +
+      '<input data-setup-key="' + f.key + '" value="' + String(val).replace(/"/g, '&quot;') + '" ' +
+      'style="width:100%;max-width:520px;padding:6px 8px;border:1px solid var(--line,#ccc);border-radius:6px;background:transparent;color:inherit" ' +
+      'placeholder="' + (f.type === 'numberList' ? '例如 100000001, 100000002' : '') + '">' +
+      '<span class="meta" style="display:block;margin-top:4px">' + (f.hint || '') + '</span>' +
+      '</label>'
+    );
+  }).join('');
+}
+
+async function loadSetup() {
+  const msg = document.getElementById('setupMsg');
+  msg.textContent = '读取中…';
+  try {
+    const data = await api('/api/setup/read');
+    if (!data.ok) { msg.textContent = data.reason || '读取失败'; return; }
+    setupFieldsCache = data.fields || [];
+    const t = data.target || {};
+    document.getElementById('setupTarget').textContent =
+      (t.label || t.kind || '未知') + (t.path ? ' · ' + t.path : '');
+    renderSetup(document.getElementById('setupFields'), setupFieldsCache, data.values || {});
+    const filled = Object.values(data.values || {}).some((v) => (Array.isArray(v) ? v.length : String(v || '').trim()));
+    msg.textContent = filled ? '已读出当前值' : '还没配过 —— 填完点保存';
+  } catch (error) {
+    msg.textContent = '请求失败: ' + error.message;
+  }
+}
+
+async function saveSetup() {
+  const msg = document.getElementById('setupMsg');
+  const payload = {};
+  document.querySelectorAll('#setupFields [data-setup-key]').forEach((el) => {
+    payload[el.dataset.setupKey] = el.value;
+  });
+  msg.textContent = '保存中…';
+  try {
+    const r = await api('/api/setup/write', {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(payload),
+    });
+    msg.textContent = (r.ok ? '✓ ' : '✗ ') + (r.reason || '');
+    if (r.ok) toast('配置已写入: ' + (r.path || ''));
+  } catch (error) {
+    msg.textContent = '保存失败: ' + error.message;
+  }
+}
+
 function toast(text) {
   const el = document.getElementById('toast');
   el.textContent = text; el.classList.add('show');
@@ -2221,6 +2298,7 @@ function loadDataGroup() {
   loadPersonaBackups();
 }
 
+loadSetup();
 refresh();
 loadHistory().then(() => startStream());
 loadQr();

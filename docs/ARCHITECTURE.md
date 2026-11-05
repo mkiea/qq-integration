@@ -1,9 +1,45 @@
-# 架构（事实清单）
+# 架构（实机核对版）
 
-> 2026-11-05 整理。**每一条都经过实机验证或读源码确认**，不是凭记忆写的。
-> 用途：我（助理）在讨论时容易把碎片讲串，这份文档是基准；主人也可以拿它纠正我。
+> **定位：这是 README「架构」章节的补充，不是替代。**
+> 抽象分层、配置项、安装步骤一律看 [README](../README.md) 与 [FEATURES](FEATURES.md)，
+> 本文只写**实机核对过、且 README 里没有的三类东西**：
+>
+> 1. **运行中的 PID / 连接对**（2026-11-05 17:47 实测，含进程树）
+> 2. **两个容易误判的点**：`netstat` 看不见 3080；6700 是桥监听而非 OneBot 监听
+> 3. **注入原语的精确构成**（55 KB = exe 34 KB + dll 21 KB）
+>
+> 📌 教训（写给未来的自己）：README 第 20 行就写着
+> 「OneBot 实现（Waylay〔当前默认〕/ NapCat / LLOneBot / OpenShamrock / Lagrange…）」——
+> 我两次把 NapCat 当成主方案，是因为**没读 README 就先猜**。
 
 ---
+
+## 零、当前实机链路（17:47 实测）
+
+```
+29800  NapCatWinBootMain.exe  ← 注入原语
+       参数：QQ.exe + NapCatWinBootHook.dll -q 3753306415
+  └ 33264  QQ.exe -q 3753306415   ← 被注入的 QQ（机器人号）
+       加载模块里只有 NapCatWinBootHook.dll（21 KB），没有 napcat.mjs
+       └ Waylay（waylay-src/index.js）在进程内跑
+            │ Reverse WS 127.0.0.1:63553 → 6700
+            ▼
+21392  node  qq-control.mjs        ← 控制台（:8880）
+  └ 31644  node  dsh bin.js web --no-open   ← **宿主由控制台拉起**
+       └ 桥插件（:6700 的 LISTEN 持有者，netstat 里 ESTABLISHED 也是它）
+            └ agent.followup → LLM → turn/end → 分段/DLP → 回 Waylay
+
+另有 18868 QQ.exe /background（普通号），与机器人号互不干扰
+```
+
+**日志印证**：`[onebot] Reverse WS connected to ws://127.0.0.1:6700/`、
+`followup sent` / `assistant text len=13` / `turn/end completed`。
+
+**这条推翻了两个旧说法**：
+- ❌ "双击 DeepSeek Harness 桌面端启动宿主" → ✅ **宿主是控制台拉起的**（`dsh bin.js web --no-open`）
+- ❌ "NapCat 是核心组件" → ✅ **Waylay 是默认实现**，NapCat 只是可选项/降级
+
+
 
 ## 一、进程与端口（实机验证）
 

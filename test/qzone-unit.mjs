@@ -256,8 +256,15 @@ import { splitMomentMarkers, proactiveMomentPrompt } from '../lib/bridge.js'
   check('H [pic:最近] → 最近 1 张', picLatest.pics.length === 1 && picLatest.pics[0] === 1, JSON.stringify(picLatest))
   check('H [pic:] 也从正文里剥掉', picLatest.text === '晒一下', JSON.stringify(picLatest.text))
 
+  // ★ 语义（2026-11-06 改）：`[pic:N]` = 取**最近 N 张**，不是"第 N 张"
   const pic2 = splitMomentMarkers('看看 [pic:2]')
-  check('H [pic:2] → 第 2 张', pic2.pics.length === 1 && pic2.pics[0] === 2, JSON.stringify(pic2))
+  check('H [pic:2] → 取最近 2 张', pic2.pics.length === 1 && pic2.pics[0] === 2, JSON.stringify(pic2))
+
+  const pic9 = splitMomentMarkers('摊开 [pic:9]')
+  check('H [pic:9] 在平台上限内（≤9）', pic9.pics[0] === 9, JSON.stringify(pic9))
+
+  const pic10 = splitMomentMarkers('超上限 [pic:10]')
+  check('H [pic:10] 超上限当没写', pic10.pics.length === 0, JSON.stringify(pic10))
 
   const picOut = splitMomentMarkers('无效 [pic:99]')
   check('H 越界（99）当没写', picOut.pics.length === 0, JSON.stringify(picOut))

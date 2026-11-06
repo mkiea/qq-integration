@@ -26,6 +26,7 @@ import { readdirSync, readFileSync, writeFileSync, statSync } from 'node:fs'
 import { dirname, join, basename, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { request as httpRequest } from 'node:http'
+import { filterFabricated } from '../lib/memory-digest.js'
 
 /**
  * 数据目录：别再写死本机绝对路径（2026-11-06，隐私套件抓到 `C:/Users/<用户名>/…`）。
@@ -46,6 +47,20 @@ const MODEL = process.argv.includes('--model')
 
 /** 每个对话取最近多少条（全取会超上下文，而且旧对话参考价值低） */
 const PER_CHAT = 40
+/**
+ * 再从 `archive` 里取多少条「更早」的（2026-11-06 补）。
+ *
+ * ⚠️ 这是原来的真缺口：`renderChat` 只读 `history`（最近 60 条里的后 40），
+ * 而 `archive` 那 400 条**一条都没进过总纲** —— 等于她只记得最近几天，
+ * 更早的喜欢/经历被 `history` 窗口挤出去以后，就再也进不了总纲了。
+ * 取尾部 20 条（离现在最近的早期记录），带「（更早）」标记，避免和 history 混淆。
+ *
+ * ⚠️ 2026-11-06 实测后**暂时归零**：设成 20（输入 300 条）时 7B 明显退化 ——
+ * 第一次编出「看动画」（输入里没有），第二次只写 69 字、把真实事件写成「无」。
+ * 想覆盖早期记忆，正确路子是**分批摘要**（每个对话单独摘 → 再合并成总纲），
+ * 不是把单次输入加长。等分批版落地再打开。
+ */
+const PER_ARCHIVE = 0
 
 function listMemoryFiles() {
   try {
@@ -62,13 +77,27 @@ function renderChat(file) {
   const json = JSON.parse(readFileSync(file, 'utf8'))
   const kind = basename(file).startsWith('g_') ? '群聊' : '私聊'
   const hist = Array.isArray(json.history) ? json.history : []
-  const picked = hist.slice(-PER_CHAT)
+  const arch = Array.isArray(json.archive) ? json.archive : []
+  /**
+   * 「更早」只取**她自己说的话**（2026-11-06 第二次修）。
+   *
+   * 第一次把 archive 的双方发言都喂进去，模型立刻把**对方**说的「在弄虚拟机呢」
+   * 写成「她喜欢的东西：虚拟机」——张冠李戴。总纲要的是"她是什么样的人"，
+   * 对方的话只对理解上下文有用，对"她本人"没有证据力，早期部分干脆不带。
+   */
+  // ⚠️ `slice(-0)` 等于 `slice(0)` —— 会把整个 archive 全吞进来（实测过：247 条）。
+  // PER_ARCHIVE=0 时必须显式给空数组，不能用负索引。
+  const early = PER_ARCHIVE > 0 ? arch.filter((m) => m.role === 'assistant').slice(-PER_ARCHIVE) : []
+  // 「更早」在前、「最近」在后：让模型按时间顺序读，和它自己写摘要的习惯一致。
+  const picked = [...early.map((m) => ({ ...m, early: true })), ...hist.slice(-PER_CHAT)]
   const lines = picked.map((m) => {
     const who = m.role === 'assistant' ? '她' : '对方'
     const text = String(m.text ?? '').replace(/\s+/g, ' ').slice(0, 120)
-    return `${who}: ${text}`
+    return `${m.early === true ? '（更早）' : ''}${who}: ${text}`
   })
-  return { kind, id: basename(file, '.json'), lines, updatedAt: json.updatedAt }
+  // 校验用的语料：**只有她说的话**才算"关于她"的证据。
+  const herText = [...early, ...hist.slice(-PER_CHAT)].filter((m) => m.role === 'assistant').map((m) => String(m.text ?? '')).join('\n')
+  return { kind, id: basename(file, '.json'), lines, herText, earlyCount: early.length, updatedAt: json.updatedAt }
 }
 
 function callOllama(prompt, model) {
@@ -77,7 +106,8 @@ function callOllama(prompt, model) {
       model,
       prompt,
       stream: false,
-      options: { temperature: 0.2, num_predict: 600, num_ctx: 8192 },
+      // num_ctx 从 8192 提到 16384：现在每个对话多带 20 条「更早」，5 个对话约 +100 行
+      options: { temperature: 0.1, num_predict: 400, num_ctx: 16384 },
     })
     const req = httpRequest(
       { host: '127.0.0.1', port: 11434, path: '/api/generate', method: 'POST',
@@ -108,11 +138,22 @@ const PROMPT = (chats) => `下面是一个叫「软软」的小女孩和几个�
 （**不要**写"她跟谁是什么关系/称呼什么"——那部分每个对话的 u_*.json 自己带着，
 混进总纲会让她在所有人面前叫错称呼）
 
+**只写她（「她:」开头的那几行）说过的话。**
+「对方:」说的话是别人在讲自己的事，**不算她的经历**——
+上一版就是把对方说的"在弄虚拟机呢"写成了"她喜欢虚拟机"，这是错的。
+
+记录里标了「（更早）」的是更早以前的事，和最近的混在一起按事实写就行，不用标注时间。
+
 要求：
 - 只写这些记录里**真实出现**的，不要推测、不要编造
-- 每条一行，用「- 」开头
 - 总字数不超过 250 字
-- 没有内容的类别写「- 无」
+
+输出格式（**严格照抄这个形状，不要用子列表**）：
+- 她喜欢的东西：条目1、条目2、条目3
+- 重要事件：条目1、条目2、条目3
+
+一类只能有一行；没有内容就写「- 她喜欢的东西：无」。
+**不要**输出只有「- 无」的行，**不要**用「  - 」缩进子项，**不要**加编号。
 
 ${chats.map((c) => `【${c.kind} ${c.id}】\n${c.lines.join('\n')}`).join('\n\n')}
 `
@@ -125,8 +166,8 @@ if (files.length === 0) {
 
 const chats = files.map(renderChat)
 const totalLines = chats.reduce((n, c) => n + c.lines.length, 0)
-console.log(`读取 ${chats.length} 个对话，共 ${totalLines} 条（每个取最近 ${PER_CHAT} 条）`)
-for (const c of chats) console.log(`  ${c.kind} ${c.id}: ${c.lines.length} 条`)
+console.log(`读取 ${chats.length} 个对话，共 ${totalLines} 条（最近 ${PER_CHAT} 条 + 更早 ${PER_ARCHIVE} 条）`)
+for (const c of chats) console.log(`  ${c.kind} ${c.id}: ${c.lines.length} 条（其中更早 ${c.earlyCount} 条）`)
 
 if (DRY) {
   console.log('\n--- 输入预览（前 20 行）---')
@@ -163,6 +204,19 @@ if (filtered !== summary.trim()) {
   console.log('（已滤掉关系/称呼相关行——那部分不归总纲）')
 }
 summary = filtered
+
+/**
+ * 出处校验（2026-11-06）：prompt 里写"不要编造"不够，7B 照样编。
+ * 语料只取**她说的话** —— 对方的话对"她本人"没有证据力。
+ */
+const corpus = chats.map((c) => c.herText).join('\n')
+const checked = filterFabricated(summary, corpus)
+if (checked.dropped.length > 0) {
+  console.log(`出处校验：丢掉 ${checked.dropped.length} 条无出处条目：${checked.dropped.map((d) => `${d.item}(${d.ratio.toFixed(2)})`).join('、')}`)
+} else {
+  console.log('出处校验：全部条目都有出处')
+}
+summary = checked.text
 
 const stamp = new Date().toISOString()
 const doc = `# 软软的总纲记忆

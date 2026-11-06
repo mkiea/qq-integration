@@ -13,7 +13,7 @@ QQ ↔ DeepSeek Harness 双向桥插件（独立 bundle，自研维护）。QQ �
 |---|---|---|
 | **OneBot v11**（协议层） | 反向 WS 服务端、事件分发、action 调用、@ 解析、合并转发——复用上游 `dsh-qq-onebot-bridge` 的代码并继续维护 | QQ 登录、协议编解码、收发包（都在 OneBot 实现里） |
 | **OneBot 实现**（QQ 接入端） | 只要它说 v11 就认：Waylay / NapCat / LLOneBot / OpenShamrock / Lagrange / go-cqhttp | 不打包、不分发任何实现的二进制 |
-| **Waylay**（当前默认接入端） | **内置**拉起 / 停止 / 状态读取（`lib/waylay-launch.js` + `/api/waylay*` + 面板「启动 Waylay」） | Waylay 本体与注入 DLL（由用户自行安装） |
+| **Waylay**（当前默认接入端） | **内置**拉起 / 停止 / 状态读取（`lib/waylay-launch.js` + `/api/waylay*` + 面板「启动 Waylay」）+ 发行版布局自动探测 | Waylay 运行时本体与注入 DLL：**单独的发行件**（Apache-2.0），仓库不打包第三方二进制，见 `NOTICE.md` |
 
 来源、许可证与「复用边界」写在 [`NOTICE.md`](NOTICE.md)；上游 MIT 版权行在 `LICENSE` 里原样保留。
 
@@ -105,10 +105,17 @@ dsh plugin --profile web add <本目录>
 |---|---|---|
 | Windows 10/11 x64 | Waylay 注入的是官方 `QQ.exe` | 跑不了（本项目没做其它平台） |
 | 官方 NTQQ（PC 版） | 被注入的那个进程，机器人账号登在它里面 | 「启动 Waylay」找不到进程 |
-| Node.js ≥ 20 | 跑插件和控制台 | 宿主/控制台起不来 |
+| **Node.js ≥ 24.9.0** | 跑 DSH 0.2.2-rc.1（它的 `engines.node` 就是这个下限） | Node 22 下 `dsh --version` / `plugin add` **exit 0、零输出、profile 一个文件都不建** |
+| **`pnpm`** | `dsh plugin --profile web add` 会直接调系统 pnpm | 注册报 `'pnpm' 不是内部或外部命令` |
+| **VC++ 2015-2022 Redistributable x64** | Waylay 注入器的 `NapCatWinBoot*` 需要 `MSVCP140.dll` / `VCRUNTIME140.dll` | 弹 DLL 错误框后进程消失，13000 永远不监听 |
+| **Waylay 运行时 `rin-inject\`** | 注入 QQ、提供 13000 控制台 | 只能接别的 OneBot 实现；「启动 Waylay」报找不到入口 |
 | DSH（`dsh` CLI 或桌面端） | 提供宿主、模型、插件加载 | 插件没地方挂 |
 | **一个 QQ 小号** | 机器人自己的账号 | 用主号 = 拿主号去赌风控，别这么做 |
 | 模型（云端 key 或本地 Ollama） | 生成回复 | 能收不能回 |
+
+> **干净机请看 [`docs/CLEAN-INSTALL.md`](docs/CLEAN-INSTALL.md)**：2026-11-06 在 Win11 虚拟机真机从零
+> 下载 QQ / Node 24 / DSH 0.2.2-rc.1 / Waylay 并打通 3080→6700→13000 的完整记录，含六个「不报错但装不上」的坑。
+> 一条命令先自查：`node launcher/preflight.mjs`（只读，与控制台「一键体检」同一份量具）。
 
 ### 1. 装依赖并注册插件
 
@@ -185,10 +192,22 @@ dsh plugin --profile <profile> add <本目录>                # 注册进 profil
 
 ### 4. 启动顺序（顺序错了会看到各种"没反应"）
 
-1. 双击 `control/启动控制台.bat`（或 `node control/bin/qq-control.mjs`），记下它打印的带 token 地址；
+**推荐：双击仓库根目录的 `一键启动.bat`。** 它按固定顺序做完三件事，全部结果打印在同一个窗口里：
+
+1. `launcher/preflight.mjs` 只读体检（Node↔DSH engines / `dsh --version` / pnpm / VC++ / QQ / Waylay 运行时）；
+   有**硬失败就停下**，不在一个跑不起来的环境里假装启动成功；软缺失（如没装 QQ）只提醒；
+2. 起控制台（8880，`--open` 自动开窗），记下它打印的带 token 地址；
+3. `--start-all` 调同一个 `api.startAll()`：**Waylay → DSH 宿主 → 可选本地语音**，逐步打印结果。
+   已在跑的项跳过；逻辑与面板「一键启动」完全一致（单实例锁、端口预检、停止护栏都还在）。
+
+手动分步（调试时用）：
+
+1. 双击 `control/启动控制台.bat`（或 `node control/bin/qq-control.mjs`）；
 2. 控制台点 **「一键启动」**（= 起 DSH 宿主，插件随之加载）；
 3. 控制台点 **「启动 Waylay」**（注入进 QQ，**不会弹 QQ 窗口**，别等窗口）；
-4. 需要登录时点 **「看登录二维码」**，用手机 QQ 扫码。
+4. 需要登录时点 **「看登录二维码」**，用手机 QQ 扫码，再确认 `/api/status` 的 `logged_in=true`。
+
+> `control/启动控制台.bat` **只起控制台**（8880），不是完整启动器；完整链路用根目录那个。
 
 ### 5. 验证四件事（别靠"感觉它活着"）
 
@@ -223,7 +242,9 @@ profile、哪个 profile 声明了本插件、在不在 `bundles` 里、patch �
 | 症状 | 真因 |
 |---|---|
 | 扫码成功但机器人一声不吭 | 两个白名单是空的（默认全拒） |
-| 「启动 Waylay」报找不到入口 | 没配 `waylayBat`，或 `_tmp/rin-inject/` 不在预期位置 |
+| 「启动 Waylay」报找不到入口 | 运行时 `rin-inject\` 没放到插件目录旁边/内部（旧版只认开发机 `_tmp\rin-inject`，现已修）；也可在 `qq-control.json` 里填 `waylayBat` |
+| `dsh --version` 空输出、`plugin add` 说成功却没建文件 | Node 22 跑 DSH 0.2.2-rc.1（要求 ≥24.9.0）⇒ CLI 静默退出。**别把 `RC=0` 当成功**；`node launcher/preflight.mjs` 会直接判 FAIL |
+| 注入后 13000 一直不监听、QQ 进程闪一下就没 | 缺 VC++ 2015-2022 运行库（`MSVCP140.dll` / `VCRUNTIME140.dll`）；装官方 `vc_redist.x64.exe`，别用拷 DLL 侧加载当正式修法 |
 | 点了好几次「一键启动」，开出好几个 QQ 互相顶号 | Waylay 在扫码阶段不监听 13000，端口判据看不见它；控制台有 5 分钟单实例锁，锁文件在入口同目录 |
 | 记忆是空的 / 找不到聊天记录 | `dataDir` 没配（用 cwd 了）或换过目录没搬旧数据 |
 | 面板里全是空数据 | 控制台按 `dataDir` 读日志；`dataDir` 改了而控制台配置没跟上，就会读到空 |
@@ -661,8 +682,11 @@ ws://127.0.0.1:6700/
 
 **机器人在线只要求被注入的那个 QQ 反过来连 6700**，不要求你能从这里启动它——但登录/扫码那一步通常得把 Waylay 拉起来。
 
-- **不用手抄路径**：DSH 面板「快捷操作 → 启动 Waylay」与控制台「启动 Waylay」读的是**同一份** `qq-control.json`
-  （`waylayBat`，填 `_tmp\rin-inject\rin-waylay.bat` 或它所在目录），填一次两边都生效。
+- **不用手抄路径**：发行版把 `rin-inject\` 放在插件目录**旁边**或**内部**就会被自动探测到
+  （`lib/waylay-launch.js` 的 `waylayRuntimeCandidates()`，不写死盘符/用户名）；
+  开发机的 `_tmp\rin-inject` 布局也仍然兼容。探测不到时，DSH 面板「快捷操作 → 启动 Waylay」
+  与控制台「启动 Waylay」读的是**同一份** `qq-control.json` 的 `waylayBat`，填一次两边都生效。
+  想看它到底找到了哪个入口：`node control/bin/qq-control.mjs --print-config`。
 - **入口同目录的东西都是自动生成的**：注入日志与登录二维码（`qrcode.png`）都在 bat 同目录，安装包里没有、
   也别去插件目录翻。二维码超过 5 分钟自动判过期——点「停止」再「启动」重新走一遍登录。
 - **成功判据分两层**：13000 在听 = 进程起来了；`/api/status` 的 `logged_in` = 会话就绪。面板把这两件事**分开显示**
@@ -967,8 +991,8 @@ npm run control            # 或 node control/bin/qq-control.mjs --open
 | 启动预检 | 起宿主前检查 3080/6700，被占则直接报「端口←进程#PID」，而不是静默失败 |
 | 释放端口 | 对占用受管端口的进程一键 `taskkill /T /F`（护栏：只允许受管端口占用者与已知机器人进程，绝不误杀无关 PID） |
 | 日志 | 宿主 stdout / stderr / 桥调试日志，自动跟随、可切行数 |
-| 扫码状态 | 显示 NapCat 二维码图片是否存在、是否新鲜，并一键打开 6099 扫码页 |
-| 配置 | `qq-control.json` 是端口与路径的唯一真源（自动探测 node、dsh bin.js、NapCat、TTS 脚本；可在 UI 里改路径）；**6700 被 NapCat 配置写死，勿改** |
+| 扫码状态 | 显示 Waylay 二维码图片是否存在、是否新鲜，并一键打开 13000 扫码页（6099 随 NapCat 退场） |
+| 配置 | `qq-control.json` 是端口与路径的唯一真源（自动探测 node、dsh bin.js、`rin-waylay.bat`、TTS 脚本；可在 UI 里改路径）；**6700 被 OneBot 端反向 WS 配置写死，勿改** |
 | 调试 | 「录制 · 回放 · 注入」：列出 `qq-inbox.jsonl` 里录到的每条消息，可一键离线回放（沙箱 + dry-run）或注入合成事件；注入队列状态（行数 / 本次已消费 / dry-run）直接显示 |
 | 验收 | 顶部「硬约束验收台」：6 条硬约束的实时证据（无静默分支 / traceId 贯穿 / 可回放 / 可体检 / 可导出 / 可注入），不达标项直接说明该点哪里；`GET /api/acceptance` |
 | 安全 | 只绑 `127.0.0.1`；所有 API 需要 token；带 `Origin` 的跨站请求一律拒绝 |

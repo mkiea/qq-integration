@@ -51,9 +51,20 @@ DSH agent 会话
 
 | 是本包的东西 | 不是本包的东西 |
 |---|---|
-| `lib/waylay-launch.js`：入口探测、命令行拼装、PID 反查、停止计划 | `rin-waylay.bat` / `rin-launch.bat`（用户侧安装） |
-| 控制台 `/api/waylay`、`/api/waylay/start`、`/api/waylay/stop` | Waylay 本体与其注入 DLL（`NapCatWinBootHook.dll`） |
-| 状态判据：**监听 13000 的进程就是被注入的那个 QQ** | 官方 `QQ.exe`（腾讯） |
+| `lib/waylay-launch.js`：入口探测（含发行版布局）、命令行拼装、PID 反查、停止计划 | `rin-waylay.bat` / `rin-launch.bat`（**单独的发行件**） |
+| `launcher/preflight.mjs` + 根目录 `一键启动.bat`：体检 → 控制台 → 全链路启动 | Waylay 本体与其注入 DLL（`NapCatWinBootHook.dll`） |
+| 控制台 `/api/waylay`、`/api/waylay/start`、`/api/waylay/stop` | 官方 `QQ.exe`（腾讯）、VC++ Redistributable（微软） |
+| 状态判据：**监听 13000 的进程就是被注入的那个 QQ** | `6099` / NapCat 的 OneBot 实现（已退场） |
+
+**「仓库不打包二进制」与「发行版带 Waylay 运行时」是两件事**，不要混为一谈：
+
+- **本仓库**（git / npm 包）只有上面左栏的 JS 与脚本，不含任何第三方二进制；
+- **发行版**（release 里的一组分发包）额外提供一个独立的 `rin-inject/` 包，
+  里面是 Waylay 运行时 + 两个注入原语，带它自己的 **Apache-2.0 LICENSE** 与来源说明；
+  它与插件包并列解压，由 `waylayRuntimeCandidates()` 自动探测。它**不进 git、不进 npm 包**；
+- 只借用 `NapCatWinBootMain.exe`(34 KB) + `NapCatWinBootHook.dll`(21 KB) 作为把 JS
+  塞进 QQ 的注入原语，**NapCat 的 OneBot 实现没有加载**（判据：`RIN_MODE=waylay`、
+  `6099` 无监听）。
 
 三条与 NapCat 时代的根本差异（也是为什么不能只换个字符串）：
 

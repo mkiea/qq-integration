@@ -54,7 +54,11 @@ export function runtimeRoot({ home = process.env.USERPROFILE || process.env.HOME
 const SKIP_DIRS = new Set(['node_modules', '_tmp', '.git', '_snapshots', 'qq-images', 'qq-memory', 'qq-tts', 'qq-files'])
 
 /** 只同步这些顶层目录/文件（其余一概不碰，避免把数据和日志一起搬过去）。 */
-const SYNC_ROOTS = ['lib', 'client', 'control', 'test', 'docs', 'package.json', 'cordis.patch.yml', 'README.md', 'README.en.md', 'CHANGELOG.md', 'NOTICE.md', 'LICENSE']
+const SYNC_ROOTS = [
+  'lib', 'client', 'control', 'test', 'docs', 'launcher', 'scripts',
+  'package.json', 'cordis.patch.yml', 'README.md', 'README.en.md',
+  'CHANGELOG.md', 'NOTICE.md', 'LICENSE', '一键启动.bat',
+]
 
 /** 递归列出相对路径（只走 SYNC_ROOTS，跳过 SKIP_DIRS）。 */
 export function collectFiles(root, { syncRoots = SYNC_ROOTS, skipDirs = SKIP_DIRS } = {}) {

@@ -1,5 +1,40 @@
 # 更新日志 / Changelog
 
+#### 未发布（2026-11-06 夜）— 干净机启动器 · 前置体检 · 安装假绿修复
+
+> 来源：Win11 虚拟机「从零下载 DSH + QQ + Waylay」真机实录（`docs/CLEAN-INSTALL.md`）。
+> 这一批**只修发行/安装链**，不动桥的回复逻辑。`package.json` 版本仍为 `0.1.0`；正式版未发。
+
+**① 发行包原来一个启动器都没有**
+3,409 条目的部署包里 `rin-waylay.bat` / `rin-launch.bat` / `waylay-src` / `launcher` 全是 0，
+唯一的 `.bat` 只起 8880 控制台。新增根目录 `一键启动.bat`：
+`launcher/preflight.mjs` 只读体检 → 控制台 `--open --start-all` → 逐步打印
+Waylay / DSH 宿主 / 可选本地语音的结果。`--start-all` 调的是面板同一个 `api.startAll()`，
+单实例锁、端口预检、停止护栏全部保留。
+
+**② Waylay 入口探测只认开发机布局**
+`control/lib/config.mjs` 原来只推 `<cwd>/../_tmp/rin-inject`。新增纯函数
+`lib/waylay-launch.js::waylayRuntimeCandidates()`，认插件内 / 插件兄弟 / 数据目录内 /
+数据目录兄弟 / 开发机老布局，不写死盘符与用户名；`WAYLAY_BAT_HINT` 不再把用户指向 `_tmp`。
+
+**③ 干净机前置体检（`lib/env-preflight.js`）**
+六个不报错但装不上的坑做成一份量具，双击启动器与 `tools/doctor.mjs` 共用：
+`dsh --version` **零输出即 FAIL**（Node 22 + dsh 0.2.2-rc.1 会 exit 0 却什么都不做）、
+按已装 DSH 的 `engines.node` 判 Node 相容、pnpm、VC++ 运行库、QQNT、Waylay 运行时。
+`test/env-preflight-unit.mjs` 同时验「干净机必须 FAIL」与「修好后必须全绿」
+（24 项），不测单向的假绿。
+
+**④ 安装脚本不再把 `RC=0` 当成功**
+`scripts/install-windows.ps1`：Node 门槛改为从 `npm view @deepseek-ai/dsh@<ver> engines.node`
+取（默认 24.9.0 兜底并声明是实测值）；`dsh --version` 空输出直接停；显式装 pnpm 并验版本；
+`dsh plugin add` 后用 **`cordis.patch.yml` + profile `package.json` 的真实产物**验注册；
+最后跑同一份前置体检。README 表格、六个坑、启动顺序、残留的 6099/NapCat 表述同步更新；
+`NOTICE.md` 说清「仓库不打包二进制 / 发行版单独带 Apache-2.0 运行时」两条边界；
+`sync-runtime` 与 `package.json.files` 纳入新文件。
+
+**🔴 仍未做完**：QQ 登录二维码未扫 ⇒ 真实消息全链路未验；VC++ 正式安装路径未在 VM 重验；
+正式版发行通道未打通。详见 `docs/CLEAN-INSTALL.md` 第 6 节。
+
 ### v0.1.0-beta-3（2026-11-06）— 记忆不再丢 · 重启按钮恢复 · GIF 多帧 · 图片清理
 
 > **tag：`v0.1.0-beta-3`**。`v0.1.0-beta-2` 已被占用（10-31 / `4533d54`，且已推远端），

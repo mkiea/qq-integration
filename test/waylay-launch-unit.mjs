@@ -8,8 +8,8 @@ import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
 import {
   detectWaylayBat, parseListenerPid, waylayLaunchCommand, stopPlan,
-  describeStatus, waylayLogPath, waylayQrPath,
-  WAYLAY_PORT, WAYLAY_ENTRY_FILE, WAYLAY_LOG_FILE, WAYLAY_QR_FILE,
+  describeStatus, waylayLogPath, waylayQrPath, waylayRuntimeCandidates,
+  WAYLAY_PORT, WAYLAY_ENTRY_FILE, WAYLAY_LOG_FILE, WAYLAY_QR_FILE, WAYLAY_BAT_HINT,
 } from '../lib/waylay-launch.js'
 
 // ---------------------------------------------------------------- detectWaylayBat
@@ -45,6 +45,41 @@ test('detectWaylayBat: 给目录时自动补文件名', () => {
 
 test('detectWaylayBat: 全都找不到就返回空串（不抛）', () => {
   assert.equal(detectWaylayBat({ configured: '', env: {}, exists: () => false }), '')
+})
+
+// ---------------------------------------------------------------- 发行版布局（2026-11-06 VM 干净机）
+test('waylayRuntimeCandidates: 发行版「插件与运行时并列」必须被推到', () => {
+  const repo = 'C:/real-install/qq-integration'
+  const dirs = waylayRuntimeCandidates({ repo, cwd: 'C:/real-install/qq_chat' })
+    .map((p) => String(p).replace(/\\/g, '/'))
+  assert.ok(dirs.includes('C:/real-install/rin-inject'), `缺兄弟目录：${dirs.join(' | ')}`)
+  assert.ok(dirs.includes('C:/real-install/qq-integration/rin-inject'), `缺包内目录：${dirs.join(' | ')}`)
+  assert.ok(dirs.some((p) => p.includes('_tmp/rin-inject')), '开发机老布局不能丢')
+})
+
+test('waylayRuntimeCandidates: 候选去重、不写死用户名/盘符', () => {
+  const dirs = waylayRuntimeCandidates({ repo: 'D:/x/qq-integration', cwd: 'D:/x/qq_chat' })
+  assert.equal(new Set(dirs).size, dirs.length, '有重复候选')
+  assert.ok(dirs.every((p) => !p.includes('SolimPurmiss')), '混进了作者本机绝对路径')
+})
+
+test('★ 干净机布局能被 detectWaylayBat 真正找到（不是只生成了候选）', () => {
+  const repo = 'C:/real-install/qq-integration'
+  const cwd = 'C:/real-install/qq_chat'
+  const target = 'C:/real-install/rin-inject/rin-waylay.bat'
+  const norm = (p) => String(p).replace(/\\/g, '/')
+  const got = detectWaylayBat({
+    configured: '',
+    env: {},
+    exists: (p) => norm(p) === target || norm(p) === 'C:/real-install/rin-inject',
+    extra: waylayRuntimeCandidates({ repo, cwd }),
+  })
+  assert.equal(norm(got), target, `发行版兄弟目录没被探测到：${got}`)
+})
+
+test('WAYLAY_BAT_HINT 不再把用户指向开发机的 _tmp 路径', () => {
+  assert.ok(!WAYLAY_BAT_HINT.includes('_tmp'), WAYLAY_BAT_HINT)
+  assert.ok(WAYLAY_BAT_HINT.includes('rin-inject'), WAYLAY_BAT_HINT)
 })
 
 // ---------------------------------------------------------------- parseListenerPid

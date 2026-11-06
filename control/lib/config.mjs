@@ -7,10 +7,14 @@
  */
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from 'node:fs'
 import { dirname, join, parse, resolve } from 'node:path'
-import { detectWaylayBat, WAYLAY_BAT_HINT, WAYLAY_PORT } from '../../lib/waylay-launch.js'
+import { fileURLToPath } from 'node:url'
+import { detectWaylayBat, waylayRuntimeCandidates, WAYLAY_BAT_HINT, WAYLAY_PORT } from '../../lib/waylay-launch.js'
 // 读 profile `cordis.patch.yml` 里那个 dataDir。`lib/panel.js` 自身零 import，不会成环；
 // 走它的 `readPatchValue` 而不是自己 split 冒号，是因为 YAML 值里的盘符/引号会被简单解析切错。
 import { readPatchValue } from '../../lib/panel.js'
+
+/** 插件仓库根（本文件在 control/lib/ 下，往上两级）。用来推发行版里并列的 rin-inject/。 */
+const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..')
 
 /** Ports the console cares about. 6700 is pinned by the OneBot client config. */
 export const DEFAULT_PORTS = {
@@ -177,13 +181,15 @@ export function detectPaths(config = {}, { env = process.env, exists = existsSyn
   ])
 
   // Waylay 入口：真正在用的那条路。只有一个入口、不需要挑加载器。
-  // 默认位置按本项目的标准布局推：cwd 是 qq_chat，注入目录在它的兄弟 _tmp/rin-inject。
-  // 推不到就让用户填一次 waylayBat（写进 qq-control.json），不必改代码。
+  // ★ 2026-11-06 VM 干净机实测：旧版只推 `<cwd>/../_tmp/rin-inject`（开发机布局），
+  //   发行版把运行时与插件并列解压时永远探测不到 ⇒ 用户被迫手填 waylayBat。
+  //   现在同时推「插件目录内 / 插件兄弟目录 / 数据目录内 / 数据目录兄弟 / 开发机老布局」，
+  //   全部由纯函数生成，不写死任何盘符或用户名。
   const detectedWaylay = detectWaylayBat({
     configured: config.waylayBat,
     env,
     exists,
-    extra: cwd ? [join(cwd, '..', '_tmp', 'rin-inject')] : [],
+    extra: waylayRuntimeCandidates({ repo: REPO_ROOT, cwd }),
   })
   const waylayBat = detectedWaylay === '' ? '' : resolve(detectedWaylay)
   const ttsBat = firstExisting([

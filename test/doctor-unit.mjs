@@ -44,6 +44,11 @@ function runDoctor(args, envOverrides = {}) {
 const here = runDoctor(['--install'])
 check('当前机器：--install 退出码 0（安装区没有 FAIL）', here.code === 0, `code=${here.code}`)
 check('当前机器：有 PASS 行（不是空跑）', here.out.includes('PASS'), here.out.split('\n').filter(Boolean).length + ' 行')
+// 新增的干净机前置项必须真的出现在体检里（防止量具被悄悄摘掉后测试还全绿）
+check('当前机器：体检报出 DSH CLI / Node engines / VC++ 运行库三项',
+  here.out.includes('DSH CLI 可执行') && here.out.includes('Node 与 DSH engines 相容')
+  && here.out.includes('VC++ 运行库'),
+  here.out.split('\n').filter((l) => l.includes('干净机')).length + ' 项')
 
 // ---- ② 假干净环境：必须报 FAIL ----
 const emptyHome = mkdtempSync(join(tmpdir(), 'qqai-doctor-empty-'))

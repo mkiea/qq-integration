@@ -22,6 +22,7 @@ import { createConnection } from 'node:net'
 import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
+import { probeEnvironment } from '../lib/env-preflight.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const REPO = resolve(HERE, '..')
@@ -114,6 +115,20 @@ async function checkInstall() {
   const major = Number(process.versions.node.split('.')[0])
   add('install', 'Node 版本', major >= 20 ? 'ok' : 'fail', `v${process.versions.node}（要求 ≥ 20）`,
     major >= 20 ? '' : '装 Node 20 或更高：https://nodejs.org/ （用的是 nvs/nvm 的话切换后重开终端）')
+
+  /**
+   * A1b 干净机前置条件（2026-11-06 Win11 虚拟机「从零装一遍」实测的六个坑）。
+   *
+   * 为什么复用 `lib/env-preflight.js` 而不是在这里再写一份：双击启动器与一键体检
+   * 必须给**同一个结论**。两处各写一份，早晚漂移成「启动器说能跑、体检说不能跑」。
+   *
+   * 这一组里最要紧的是 `dsh --version`：在 Node 22 + dsh 0.2.2-rc.1 的组合下，
+   * 它 exit 0、零输出，`dsh plugin add` 也 exit 0、零输出、profile 一个文件都不建。
+   * 只看退出码的安装脚本会把这判成成功——本项目已经吃过这个亏。
+   */
+  for (const item of probeEnvironment({ repo: REPO, cwd: REPO }).results) {
+    add('install', `干净机 · ${item.name}`, item.status, item.detail, item.fix)
+  }
 
   // A2 本目录就是仓库
   const pkg = readJson(join(REPO, 'package.json'))

@@ -23,13 +23,20 @@
  *   node scripts/self-memory.mjs --model qwen2.5:3b
  */
 import { readdirSync, readFileSync, writeFileSync, statSync } from 'node:fs'
-import { join, basename } from 'node:path'
-import { homedir } from 'node:os'
+import { dirname, join, basename, resolve } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { request as httpRequest } from 'node:http'
 
+/**
+ * 数据目录：别再写死本机绝对路径（2026-11-06，隐私套件抓到 `C:/Users/<用户名>/…`）。
+ *
+ * 优先级：`--data-dir` > `QQ_DATA_DIR` > **相对脚本位置推导**。
+ * 脚本在 `qq-integration/scripts/`，仓库旁边就是 `qq_chat/` ⇒ `../../qq_chat`。
+ * 桥 spawn 时传的 cwd 已经是 dataRoot，但这里不依赖 cwd —— 手动运行也照样对。
+ */
 const DATA_ROOT = process.argv.includes('--data-dir')
   ? process.argv[process.argv.indexOf('--data-dir') + 1]
-  : 'C:/Users/SolimPurmiss/Desktop/chat role/qq_chat'
+  : (process.env.QQ_DATA_DIR || resolve(dirname(fileURLToPath(import.meta.url)), '..', '..', 'qq_chat'))
 const MEMORY_DIR = join(DATA_ROOT, 'qq-memory')
 const OUT_FILE = join(MEMORY_DIR, '_self.md')
 const DRY = process.argv.includes('--dry')

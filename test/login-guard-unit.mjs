@@ -24,9 +24,25 @@ function check(name, ok, extra = '') {
 
 const src = readFileSync(new URL('../lib/bridge.js', import.meta.url), 'utf8')
 
+/**
+ * 取一个方法的源码（**按边界截，不按字符数**）。
+ *
+ * 为什么（2026-11-06 踩到）：原来用 `src.slice(at, at + 1600)`，
+ * 而 bridge.js 是 **CRLF** —— 每个换行多占 1 个码元，1600 码元只装得下约 800
+ * 个实际字符。方法一长，要找的那行就被挤出窗口，断言假红。
+ * 代价：**改代码注释也可能让这条测试翻红**，与逻辑无关。
+ */
+function methodBody(text, signature) {
+  const at = text.indexOf(signature)
+  if (at < 0) return ''
+  const rest = text.slice(at + signature.length)
+  const next = rest.search(/\r?\n  (?:async )?#\w+\(/)
+  return text.slice(at, next > 0 ? at + signature.length + next : at + 12000)
+}
+
 // ---------- L1 记录实际号 ----------
 const at = src.indexOf('\n  #noteLoginIdentity(')
-const body = at < 0 ? '' : src.slice(at, at + 1600)
+const body = at < 0 ? '' : methodBody(src, src.slice(at, at + 40))
 check('L1 有 #noteLoginIdentity 方法', at > 0)
 check('L1 会把实际号记进 botQqActual', /this\.botQqActual\s*=\s*actual/.test(body))
 check('L1 会算出 mismatch（配置>0 且不相等）', /mismatch\s*=\s*configured\s*>\s*0\s*&&\s*actual\s*!==\s*configured/.test(body))

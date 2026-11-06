@@ -250,6 +250,30 @@ import { splitMomentMarkers, proactiveMomentPrompt } from '../lib/bridge.js'
 
   const many = splitMomentMarkers('a [img:一] b [img:二]')
   check('H 多个标记都收下来（调用方只取第一张）', many.stickers.length === 2, JSON.stringify(many.stickers))
+
+  // ---- [pic:] 真图标记（2026-11-06，主人：「添加炫耀（QQ空间发送图片）」）----
+  const picLatest = splitMomentMarkers('晒一下 [pic:最近]')
+  check('H [pic:最近] → 最近 1 张', picLatest.pics.length === 1 && picLatest.pics[0] === 1, JSON.stringify(picLatest))
+  check('H [pic:] 也从正文里剥掉', picLatest.text === '晒一下', JSON.stringify(picLatest.text))
+
+  const pic2 = splitMomentMarkers('看看 [pic:2]')
+  check('H [pic:2] → 第 2 张', pic2.pics.length === 1 && pic2.pics[0] === 2, JSON.stringify(pic2))
+
+  const picOut = splitMomentMarkers('无效 [pic:99]')
+  check('H 越界（99）当没写', picOut.pics.length === 0, JSON.stringify(picOut))
+
+  const plain = splitMomentMarkers('就是想说句话')
+  check('H 没标记就纯文字（不是每条都要配图）', plain.pics.length === 0 && plain.stickers.length === 0, JSON.stringify(plain))
+
+  const both = splitMomentMarkers('图 [pic:1] 表情 [img:开心]')
+  check('H [pic:] 与 [img:] 共存', both.pics[0] === 1 && both.stickers[0] === '开心', JSON.stringify(both))
+
+  // ---- 旁白：有真图时才提 [pic:]，且明确说"别每条都配" ----
+  const hintYes = proactiveMomentPrompt(new Date('2026-11-06T20:00:00'), [], true)
+  const hintNo = proactiveMomentPrompt(new Date('2026-11-06T20:00:00'), [], false)
+  check('H 有图时旁白提示 [pic:最近]', hintYes.includes('[pic:最近]'), hintYes.slice(-120))
+  check('H 没图时不提 [pic:]（免得她写出取不到的标记）', !hintNo.includes('[pic:最近]'), hintNo.slice(-80))
+  check('H 旁白明确说"别每条都配"', hintYes.includes('别每条都配'), hintYes.slice(-120))
 }
 
 {

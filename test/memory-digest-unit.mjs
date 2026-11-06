@@ -7,7 +7,7 @@
  *
  * 用法：`node test/memory-digest-unit.mjs`
  */
-import { bigrams, groundingRatio, filterFabricated } from '../lib/memory-digest.js'
+import { bigrams, chunkLines, groundingRatio, filterFabricated } from '../lib/memory-digest.js'
 
 let passed = 0
 let failed = 0
@@ -58,6 +58,13 @@ check('G7 bigrams 去标点', JSON.stringify(bigrams('草莓，糖')) === JSON.s
 check('G7 ratio 完全命中=1', groundingRatio('草莓味', corpus) === 1, String(groundingRatio('草莓味', corpus)))
 check('G7 ratio 无命中=0', groundingRatio('看动画', corpus) === 0, String(groundingRatio('看动画', corpus)))
 check('G7 空串 ratio=1（不误伤）', groundingRatio('', corpus) === 1)
+
+// G8 chunkLines（分批摘要用）
+check('G8 空数组 ⇒ 空块（不是 [[]]）', chunkLines([], 3).length === 0)
+check('G8 整除', JSON.stringify(chunkLines([1, 2, 3, 4], 2)) === '[[1,2],[3,4]]')
+check('G8 有余数', JSON.stringify(chunkLines([1, 2, 3], 2)) === '[[1,2],[3]]')
+check('G8 size=0 兜底为 1', chunkLines([1, 2], 0).length === 2)
+check('G8 非数组不炸', chunkLines(null, 5).length === 0)
 
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exit(failed === 0 ? 0 : 1)

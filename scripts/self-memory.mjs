@@ -26,7 +26,7 @@ import { readdirSync, readFileSync, writeFileSync, statSync } from 'node:fs'
 import { dirname, join, basename, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { request as httpRequest } from 'node:http'
-import { filterFabricated } from '../lib/memory-digest.js'
+import { chunkLines, filterFabricated } from '../lib/memory-digest.js'
 
 /**
  * 数据目录：别再写死本机绝对路径（2026-11-06，隐私套件抓到 `C:/Users/<用户名>/…`）。
@@ -41,6 +41,15 @@ const DATA_ROOT = process.argv.includes('--data-dir')
 const MEMORY_DIR = join(DATA_ROOT, 'qq-memory')
 const OUT_FILE = join(MEMORY_DIR, '_self.md')
 const DRY = process.argv.includes('--dry')
+/**
+ * `--deep`：分批摘要（2026-11-06）。
+ *
+ * 单次输入塞满 history+archive 时 7B 会退化（实测编造/漏项），所以改成
+ * **每 80 行摘一次 → 再把所有小块合并**。慢（约 3~6 分钟），但能把 archive
+ * 那 400 条早期记忆也吃进来。默认关，验证过再考虑设成默认。
+ */
+const DEEP = process.argv.includes('--deep')
+const CHUNK_SIZE = 80
 const MODEL = process.argv.includes('--model')
   ? process.argv[process.argv.indexOf('--model') + 1]
   : 'qwen2.5:7b'
@@ -158,6 +167,81 @@ const PROMPT = (chats) => `下面是一个叫「软软」的小女孩和几个�
 ${chats.map((c) => `【${c.kind} ${c.id}】\n${c.lines.join('\n')}`).join('\n\n')}
 `
 
+/** 读一个记忆文件的**全部**历史（archive 在前、history 在后），并附「她说过的话」语料。 */
+function readAllTurns(file) {
+  const json = JSON.parse(readFileSync(file, 'utf8'))
+  const arch = Array.isArray(json.archive) ? json.archive : []
+  const hist = Array.isArray(json.history) ? json.history : []
+  const all = [...arch, ...hist]
+  const lines = all.map((m) => {
+    const who = m.role === 'assistant' ? '她' : '对方'
+    return `${who}: ${String(m.text ?? '').replace(/\s+/g, ' ').slice(0, 120)}`
+  })
+  const herText = all.filter((m) => m.role === 'assistant').map((m) => String(m.text ?? '')).join('\n')
+  return { lines, herText, turns: all.length }
+}
+
+const CHUNK_PROMPT = (kind, id, chunk, index, total) => `下面是「软软」和别人的一段聊天记录（${kind} ${id}，第 ${index}/${total} 段）。
+只提取**她自己**说过的事实：
+- 「她:」开头的是她说的，可以提取
+- 「对方:」开头的是别人在讲自己的事，**不算她的经历**，不要写
+
+每条一行，用「- 」开头，最多 5 条；没有就输出「- 无」。
+不要编造，记录里没有的不要写。
+
+${chunk.join('\n')}
+`
+
+const REDUCE_PROMPT = (bullets) => `下面是分批从聊天记录里提取的、关于「软软」的事实（可能有重复）。
+请合并去重，输出最终总纲：
+
+- 她喜欢的东西：条目1、条目2
+- 重要事件：条目1、条目2
+
+要求：
+- **只合并已有事实，不要新增**
+- 两类各一行，总字数不超过 250 字
+- 没有内容的类别写「- 类别：无」
+
+${bullets.join('\n')}
+`
+
+/**
+ * 分批摘要（`--deep`）：每个对话按 80 行切块 → 每块单独摘 → 最后合并。
+ * 每块都过一遍出处校验（对照**这个文件里她说的话**），不合格的条目不进池子。
+ */
+async function deepSummarize(files, chats, model) {
+  const pool = []
+  for (let i = 0; i < files.length; i++) {
+    const chat = chats[i]
+    const { lines, herText, turns } = readAllTurns(files[i])
+    const chunks = chunkLines(lines, CHUNK_SIZE)
+    console.log(`  ${chat.kind} ${chat.id}: ${turns} 条 → ${chunks.length} 块`)
+    for (let k = 0; k < chunks.length; k++) {
+      let out
+      try {
+        out = await callOllama(CHUNK_PROMPT(chat.kind, chat.id, chunks[k], k + 1, chunks.length), model)
+      } catch (error) {
+        console.log(`    第 ${k + 1} 块失败，跳过：${error.message}`)
+        continue
+      }
+      const gate = filterFabricated(out, herText)
+      if (gate.dropped.length > 0) console.log(`    第 ${k + 1} 块丢弃 ${gate.dropped.length} 条无出处`)
+      const kept = gate.text.split('\n').filter((line) => line.startsWith('- ') && !/：\s*无\s*$/.test(line))
+      pool.push(...kept)
+    }
+  }
+  if (pool.length === 0) return '- 无'
+  // `--dump-pool`：调试用，看每块到底提出了什么（不写文件时也能看）
+  if (process.argv.includes('--dump-pool')) {
+    console.log(`  池子里 ${pool.length} 条：`)
+    for (const line of pool) console.log(`    ${line}`)
+    process.exit(0)  // 只看池子，不覆盖 _self.md
+  }
+  console.log(`  合并 ${pool.length} 条事实…`)
+  return await callOllama(REDUCE_PROMPT(pool), model)
+}
+
 const files = listMemoryFiles()
 if (files.length === 0) {
   console.error(`没有找到记忆文件：${MEMORY_DIR}`)
@@ -175,12 +259,16 @@ if (DRY) {
   process.exit(0)
 }
 
-const prompt = PROMPT(chats)
-console.log(`\n调用 ${MODEL} 摘要中…`)
 const t0 = Date.now()
 let summary
 try {
-  summary = await callOllama(prompt, MODEL)
+  if (DEEP) {
+    console.log(`\n分批摘要（每块 ${CHUNK_SIZE} 行，含 archive）…`)
+    summary = await deepSummarize(files, chats, MODEL)
+  } else {
+    console.log(`\n调用 ${MODEL} 摘要中…`)
+    summary = await callOllama(PROMPT(chats), MODEL)
+  }
 } catch (error) {
   console.error(`摘要失败：${error.message}`)
   console.error('（ollama 没起？或者模型名不对。检查：curl 127.0.0.1:11434/api/tags）')

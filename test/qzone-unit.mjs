@@ -269,6 +269,14 @@ import { splitMomentMarkers, proactiveMomentPrompt } from '../lib/bridge.js'
   const picOut = splitMomentMarkers('无效 [pic:99]')
   check('H 越界（99）当没写', picOut.pics.length === 0, JSON.stringify(picOut))
 
+  // ---- [pic:喜欢] = 只取标过喜欢的（2026-11-06，主人：「发她真正喜欢的吧」）----
+  const fav1 = splitMomentMarkers('晒一下 [pic:喜欢]')
+  check('H [pic:喜欢] 解析为 -1（标记「只取喜欢的」）', fav1.pics.length === 1 && fav1.pics[0] === -1, JSON.stringify(fav1))
+  const fav2 = splitMomentMarkers('晒 [pic:fav]')
+  check('H [pic:fav] 同义', fav2.pics[0] === -1, JSON.stringify(fav2))
+  const zero = splitMomentMarkers('无效 [pic:0]')
+  check('H [pic:0] 被拒（0 既不是张数也不是喜欢）', zero.pics.length === 0, JSON.stringify(zero))
+
   const plain = splitMomentMarkers('就是想说句话')
   check('H 没标记就纯文字（不是每条都要配图）', plain.pics.length === 0 && plain.stickers.length === 0, JSON.stringify(plain))
 

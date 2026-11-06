@@ -256,6 +256,54 @@ export async function killTree(pid, { exec } = {}) {
   return run('taskkill', ['/PID', String(pid), '/T', '/F'], { exec })
 }
 
+/**
+ * 用**进程命令行**反查 PID（2026-11-06，补 #8b）。
+ *
+ * 为什么需要：`netstat` 在本机看不见宿主的监听 socket（见 `probeTcpReachable` 注释），
+ * 于是 `host.pid` 是 0。`stopHost` 拿 0 去 `assertKillAllowed` 会被判"PID 非法"，
+ * 结果「重启宿主」按钮点了没反应 —— 不是不杀，是根本不知道杀谁。
+ *
+ * ⚠️ 只在 stop/restart 这种**真要动手**的路径调用：PowerShell 冷启动 200~400ms，
+ * 不该放进 `/api/status` 的热路径。
+ *
+ * @param {string} match 命令行里必须连续出现的片段（如 `bin.js web`）
+ */
+export async function findPidByCommandLine(match, { exec = execFile, name = 'node.exe' } = {}) {
+  const needle = String(match ?? '').replace(/['"]/g, '')
+  if (needle === '') return 0
+  const script = `Get-CimInstance Win32_Process -Filter "Name='${name}'" | Where-Object { $_.CommandLine -like '*${needle}*' } | Select-Object -First 1 -ExpandProperty ProcessId`
+  const result = await run('powershell', ['-NoProfile', '-NonInteractive', '-Command', script], { exec, timeoutMs: 8000 })
+  const pid = Number(String(result.stdout || '').trim().split(/\s+/)[0])
+  return Number.isInteger(pid) && pid > 0 ? pid : 0
+}
+
+/**
+ * 反查到的 PID 要**再核一次**才允许杀：名字必须是 node.exe，命令行必须含那个片段。
+ * 防的是"反查串台"——匹配到别的项目的 `bin.js web` 就成误杀了。
+ */
+export async function verifyPidByCommandLine(pid, match, { exec = execFile, name = 'node.exe' } = {}) {
+  const target = Number(pid)
+  if (!Number.isInteger(target) || target <= 0) return { ok: false, reason: 'PID 非法' }
+  const needle = String(match ?? '').replace(/['"]/g, '')
+  const script = `Get-CimInstance Win32_Process -Filter "ProcessId=${target}" | Select-Object Name,CommandLine | ConvertTo-Json -Compress`
+  const result = await run('powershell', ['-NoProfile', '-NonInteractive', '-Command', script], { exec, timeoutMs: 8000 })
+  try {
+    const info = JSON.parse(String(result.stdout || '{}').trim() || '{}')
+    if (String(info.Name ?? '').toLowerCase() !== String(name).toLowerCase()) {
+      return { ok: false, reason: `PID ${target} 不是 ${name}（${info.Name ?? '未知'}）` }
+    }
+    if (!String(info.CommandLine ?? '').includes(needle)) {
+      return { ok: false, reason: `PID ${target} 的命令行不含 "${needle}"` }
+    }
+    return { ok: true, reason: '', commandLine: String(info.CommandLine ?? '').slice(0, 200) }
+  } catch {
+    return { ok: false, reason: '读不到该 PID 的命令行' }
+  }
+}
+
+/** 宿主在命令行里的特征（`node <dshBin> web`）。换成别的启动方式时这里要跟着改。 */
+export const HOST_CMD_MATCH = 'bin.js web'
+
 /** Whether a path exists (injectable for tests). */
 export function fileExists(file, { exists = existsSync } = {}) {
   return Boolean(file) && exists(file)
@@ -513,13 +561,31 @@ export function createSupervisor(config, deps = {}) {
      * 这时候再走 `killTree` 等于让 taskkill 结束自己（能成，但是硬杀：日志不落盘、连接全断）。
      * 所以识别出来交给调用方**优雅退出**——`self:true` 就是这个信号。
      */
-    if (host.pid === process.pid) {
-      return { ok: true, self: true, pid: host.pid, reason: '宿主就是当前进程（控制台挂在宿主里）—— 响应发出后退出' }
+    /**
+     * ★ 2026-11-06（#8b）：netstat 看不见宿主时 `host.pid` 是 0。
+     * 以前直接拿 0 去 `assertKillAllowed` ⇒ "PID 非法" ⇒ 重启按钮点了没反应。
+     * 现在用命令行反查，**并且再核一次**名字+命令行才允许杀。
+     */
+    let targetPid = host.pid
+    let verifiedByCmdline = false
+    if (targetPid === 0) {
+      targetPid = await findPidByCommandLine(HOST_CMD_MATCH, { exec })
+      if (targetPid === 0) {
+        return { ok: false, reason: `端口 ${config.ports.host} 在监听，但 netstat 看不见 PID，命令行也没找到「${HOST_CMD_MATCH}」` }
+      }
+      const verified = await verifyPidByCommandLine(targetPid, HOST_CMD_MATCH, { exec })
+      if (!verified.ok) return { ok: false, reason: `反查到的 PID ${targetPid} 不可信：${verified.reason}` }
+      verifiedByCmdline = true
     }
-    const guard = assertKillAllowed(host.pid, { snapshot, ports: config.ports })
-    if (!guard.ok) return { ok: false, reason: guard.reason }
-    const result = await killTree(host.pid, { exec })
-    return { ok: result.ok, reason: result.ok ? `宿主已停止（PID ${host.pid}）` : '停止失败' }
+    if (targetPid === process.pid) {
+      return { ok: true, self: true, pid: targetPid, reason: '宿主就是当前进程（控制台挂在宿主里）—— 响应发出后退出' }
+    }
+    if (!verifiedByCmdline) {
+      const guard = assertKillAllowed(targetPid, { snapshot, ports: config.ports })
+      if (!guard.ok) return { ok: false, reason: guard.reason }
+    }
+    const result = await killTree(targetPid, { exec })
+    return { ok: result.ok, reason: result.ok ? `宿主已停止（PID ${targetPid}）` : '停止失败' }
   }
 
   /**

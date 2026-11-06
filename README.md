@@ -627,6 +627,22 @@ profile 的 `cordis.patch.yml` 覆盖 `id: dsh-qq-onebot-bridge` 的 config（�
 | `todoEnabled` | `true` | Enable shared todos: /todo add\|list\|done\|clear and "记一下：xxx"; stored per chat in cwd/qq-todos/. |
 | `exportEnabled` | `true` | Enable /export: dump this chat's persisted conversation to a markdown file under cwd/qq-exports/. |
 
+
+### 完整配置参考（自动生成，2026-11-05）
+
+> 上表只放"日常会动"的项。**这一节是 schema 里的全部剩余项**，默认值从代码读，
+> 说明保留 schema 原文（英文）—— 不做机器翻译，避免翻出"看着通顺但含义漂移"的中文。
+>
+> 由 `tools/gen-config-reference.mjs` 生成；改 schema 后重跑即可，别手改这一节。
+> 示例里的号码一律用占位（`100000001` / `2000000001`），与真实账号无关。
+
+#### 其他（内部 / 实验性）（2 项）
+
+| 键 | 默认 | 说明（schema 原文） |
+|---|---|---|
+| `imageMaxBytes` | `500 * 1024 * 1024` | Hard size cap for qq-images (default 500 MB). Day-based retention alone never catches a folder that fills up in days, so the oldest non-favorite files are mo... |
+| `autoFavWindowMs` | `24 * 60 * 60 * 1000` | How far back to look for "the image she just said she likes" when auto-marking a favorite (default 24h). A 10-minute window missed the common case: she prais... |
+
 ## 用户侧（OneBot 实现）配置
 
 以 NapCat 为例：OneBot11 配置里把 WebSocket 客户端地址填成：

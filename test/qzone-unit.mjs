@@ -289,6 +289,13 @@ import { splitMomentMarkers, proactiveMomentPrompt } from '../lib/bridge.js'
   check('H 有图时旁白提示 [pic:最近]', hintYes.includes('[pic:最近]'), hintYes.slice(-120))
   check('H 没图时不提 [pic:]（免得她写出取不到的标记）', !hintNo.includes('[pic:最近]'), hintNo.slice(-80))
   check('H 旁白明确说"别每条都配"', hintYes.includes('别每条都配'), hintYes.slice(-120))
+
+  // ---- #6：收藏表是空的时候，不能教她写 [pic:喜欢]（写了也取不到图）----
+  const noFav = proactiveMomentPrompt(new Date('2026-11-06T20:00:00'), [], true, false)
+  const withFav = proactiveMomentPrompt(new Date('2026-11-06T20:00:00'), [], true, true)
+  check('H 没收藏时不提 [pic:喜欢]', !noFav.includes('[pic:喜欢]'), noFav.slice(-140))
+  check('H 没收藏时明说"用不了"', /用不了/.test(noFav), noFav.slice(-140))
+  check('H 有收藏时仍推荐 [pic:喜欢]', withFav.includes('[pic:喜欢]'), withFav.slice(-140))
 }
 
 {

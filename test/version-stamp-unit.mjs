@@ -7,10 +7,13 @@
  *   · 键名大小写/空格差一点 ⇒ 读出空值，界面上只显示「—」，没人知道是解析坏了。
  * 所以每条容错边界都要钉住，且**反向用例**（不该被采纳的写法）比正向更重要。
  */
-import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
+import { dirname, join } from 'node:path'
+import { fileURLToPath } from 'node:url'
 import { describeStamp, emptyStamp, parseManifest, readVersionStamp } from '../lib/version-stamp.js'
+
+const HERE = dirname(fileURLToPath(import.meta.url))
 
 let passed = 0
 let failed = 0
@@ -175,6 +178,28 @@ const GOOD = [
 {
   check('describe：null 不抛', describeStamp(null).includes('没有发行戳'))
   check('emptyStamp 每次是新对象', emptyStamp() !== emptyStamp())
+}
+
+// ------------------------------------------------ 6. 接线检查（不是渲染检查）
+//
+// 版本戳的消费点有四个：启动器首行 / doctor / 控制台顶栏 / /api/status。
+// 这里只钉住"代码有没有接上"，**不**证明浏览器里画对了 —— 那需要真起控制台看 DOM。
+// 局限写在名字里，免得以后把这几条当成视觉验收。
+
+{
+  const UI = readFileSync(join(HERE, '..', 'control', 'ui.html'), 'utf8')
+  check('接线：ui.html 有 brandStamp 容器', UI.includes('id="brandStamp"'))
+  check('接线：render 调用了 renderBrandStamp', UI.includes('renderBrandStamp(status?.stamp)'))
+  check('接线：老服务端无 stamp 时早返回', UI.includes('if (!el || !stamp) return;'))
+
+  const DOCTOR = readFileSync(join(HERE, '..', 'tools', 'doctor.mjs'), 'utf8')
+  check('接线：doctor 有「发行版本戳」一项', DOCTOR.includes("'发行版本戳'"))
+
+  const PRE = readFileSync(join(HERE, '..', 'launcher', 'preflight.mjs'), 'utf8')
+  check('接线：启动器首行打印版本', PRE.includes('版本：${describeStamp('))
+
+  const SERVER = readFileSync(join(HERE, '..', 'control', 'lib', 'server.mjs'), 'utf8')
+  check('接线：/api/status 返回 stamp', SERVER.includes('stamp: currentStamp()'))
 }
 
 // ------------------------------------------------ 清理

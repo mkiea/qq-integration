@@ -1,9 +1,13 @@
 # 更新日志 / Changelog
 
-#### 未发布（2026-11-06 夜）— 干净机启动器 · 前置体检 · 安装假绿修复
+### v0.1.0-beta-4（2026-11-07）— 干净机安装链：启动器 · 前置体检 · 桌面入口
 
+> **tag：`v0.1.0-beta-4`**。`package.json` 的 `version` 仍为 `0.1.0`；**beta 只打标签，不建发行版**
+> （发行版留给正式版）。本批**只动发行/安装链**，桥的回复逻辑一行未改。
+>
 > 来源：Win11 虚拟机「从零下载 DSH + QQ + Waylay」真机实录（`docs/CLEAN-INSTALL.md`）。
-> 这一批**只修发行/安装链**，不动桥的回复逻辑。`package.json` 版本仍为 `0.1.0`；正式版未发。
+> 验证期间顺带跑通了**真实 QQ 端到端**：扫码登录 → 私聊一条 → `inbound → whitelist → model →
+> agent（新建会话）→ reply（拆 2 条发送）`，`6099=0`（NapCat 未加载）。
 
 **① 发行包原来一个启动器都没有**
 3,409 条目的部署包里 `rin-waylay.bat` / `rin-launch.bat` / `waylay-src` / `launcher` 全是 0，
@@ -22,7 +26,7 @@ Waylay / DSH 宿主 / 可选本地语音的结果。`--start-all` 调的是面�
 `dsh --version` **零输出即 FAIL**（Node 22 + dsh 0.2.2-rc.1 会 exit 0 却什么都不做）、
 按已装 DSH 的 `engines.node` 判 Node 相容、pnpm、VC++ 运行库、QQNT、Waylay 运行时。
 `test/env-preflight-unit.mjs` 同时验「干净机必须 FAIL」与「修好后必须全绿」
-（24 项），不测单向的假绿。
+（28 项），不测单向的假绿。
 
 **④ 安装脚本不再把 `RC=0` 当成功**
 `scripts/install-windows.ps1`：Node 门槛改为从 `npm view @deepseek-ai/dsh@<ver> engines.node`
@@ -41,8 +45,39 @@ Waylay / DSH 宿主 / 可选本地语音的结果。`--start-all` 调的是面�
 预检加第 7 项「控制台能启动宿主（bin.js）」，启动器与 doctor 都改走 `loadControlConfig()`
 （先读 `qq-control.json`，手填过 `dshBin` 的机器不会被打回）。
 
-**🔴 仍未做完**：QQ 登录二维码未扫 ⇒ 真实消息全链路未验；VC++ 正式安装路径未在 VM 重验；
-正式版发行通道未打通。详见 `docs/CLEAN-INSTALL.md` 第 6 节。
+**⑥ 便携 Node 的两处断点（真跑启动器才暴露）**
+- `5d50f31`：node 在 `<安装根>\node24`、插件在 `<安装根>\qq-integration`，原候选只看「插件同级」
+  ⇒ 启动器报「没找到 node.exe」。补 `..\node.exe` / `..\node24\node.exe` / `..\..\…` /
+  `%USERPROFILE%\nodejs`，失败提示写清查过哪些位置。
+- `562d2f2`：用 `QQ_BRIDGE_NODE` 指到便携 node 后，`dsh.cmd` / `npm.cmd` 就在 node 旁边却找不到
+  （不在 PATH）⇒ 探测前把 `dirname(process.execPath)` 前置进 PATH（只影响该进程，不改系统环境）。
+- `cf0a169`：`.bat` 里一句中文全角标点的 `echo` 被 cmd 在 `chcp 65001` 下**拆行**，
+  尾段当命令执行（`'...' is not recognized`）⇒ **bat 内 echo 一律 ASCII**，中文全部交给 Node 侧打印。
+
+**⑦ Waylay 启动曾经「零输出」，并且我误判过它**
+`startWaylay` 用 `startDetached` 的默认 stdio（三个 `ignore`）+ `windowsHide` 拉起注入器，
+失败时现场只有锁文件、13000 不监听、**一个字节日志都没有**。修法（`0968a49`）：
+把 stdout/stderr 落到 `rin-inject\rin-launch-out.log` / `-err.log`，`waylayStatus` 在 13000
+没监听时读最后一条非空日志写进 `reason`/`text`（<256KB 才读）。
+**订正**：加日志后复现发现它并非「起不来」，而是 `startAll` 同时拉 Waylay 与宿主，
+在 2 vCPU 的 VM 上用了约 104 秒（手动单跑 ~15 秒）——**「没等到」不等于「失败」**。
+
+**⑧ 首次运行在桌面建快捷方式（带图标）**
+`df1b4f5` + `ad2efb9`：`launcher/make-shortcut.ps1` 用 `GetFolderPath('Desktop')` +
+`WScript.Shell CreateShortcut` 写固定名 `QQ 集成接入.lnk`（幂等、失败只报错不阻断启动、
+Save 后读回核对 Target/WorkingDir/Icon）；`一键启动.bat` 在体检后插 `[2/3] Desktop shortcut`；
+安装脚本也建一次。图标 `launcher/qq-integration.ico` 7 帧（16–256），深底圆角 + 双向箭头。
+两条编码红线也钉进测试：**ps1 必须 UTF-8 BOM**（PS 5.1 按 ANSI 读无 BOM 的 UTF-8），
+**bat 必须无 BOM**（否则第一行不是 `@echo off`）。
+
+**⛔ 一条自我订正**：⑦ 那次我先判成「静默失败」，是下重了。加日志复现后确认是**慢**，
+真缺陷只有「什么都不输出」。这条写在这里是因为它比任何一个 bug 都值得记住。
+
+**🔴 仍未做完**：正式版 `v0.1.0` 发行通道（`gh` 缺失、GitHub API `HTTP=000`，`git ls-remote` 可达）；
+全套只在**这一台** Win11 VM 上验过（n=1）；VC++ 是官方 redist 还是侧加载未取证；
+群聊 @ / 图片 GIF / 语音 / 记忆长跑 / 被顶号重连都还没在 VM 里跑。详见 `docs/CLEAN-INSTALL.md` 第 6 节。
+
+**测试**：126 套件全绿 / 0 红 / 0 卡死，断言 **5,401**。
 
 ### v0.1.0-beta-3（2026-11-06）— 记忆不再丢 · 重启按钮恢复 · GIF 多帧 · 图片清理
 

@@ -45,7 +45,11 @@ if errorlevel 1 (
   exit /b 1
 )
 
-echo [2/3] Starting console and the full chain: Waylay - DSH host - optional TTS
+rem Desktop entry: created once, idempotent, never blocks startup on failure.
+echo [2/3] Desktop shortcut
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0launcher\make-shortcut.ps1" -TargetBat "%~f0" -WorkDir "%~dp0"
+
+echo [3/3] Starting console and the full chain: Waylay - DSH host - optional TTS
 echo       Keep this window open. Closing it does NOT stop the host.
 echo.
 "%NODE_EXE%" "%~dp0control\bin\qq-control.mjs" --open --start-all

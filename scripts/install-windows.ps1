@@ -1,4 +1,4 @@
-<#
+﻿<#
 .SYNOPSIS
   Windows 安装：Node + DSH + QQ 桥插件，含「干净机」前置检查。
 
@@ -200,7 +200,18 @@ if (Test-Path $preflight) {
   Say "没找到 launcher\preflight.mjs —— 你可能装的是旧包" "warn"
 }
 
-# ---------------------------------------------------------------- 7. 下一步
+# ---------------------------------------------------------------- 7. 桌面快捷方式（幂等，失败不影响安装）
+$shortcutMaker = Join-Path $InstallDir "launcher\make-shortcut.ps1"
+if (Test-Path $shortcutMaker) {
+  $launcherBat = @(Get-ChildItem -LiteralPath $InstallDir -Filter "*.bat" -File -ErrorAction SilentlyContinue) | Select-Object -First 1
+  if ($launcherBat) {
+    & powershell -NoProfile -ExecutionPolicy Bypass -File $shortcutMaker -TargetBat $launcherBat.FullName -WorkDir $InstallDir
+  } else {
+    Say "没找到启动脚本（*.bat），跳过桌面快捷方式" "warn"
+  }
+}
+
+# ---------------------------------------------------------------- 8. 下一步
 Write-Host ""
 Say "安装部分完成。接下来是**需要你自己填/自己装**的：" "warn"
 Write-Host @"

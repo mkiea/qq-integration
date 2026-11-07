@@ -20,19 +20,41 @@ const here = dirname(fileURLToPath(import.meta.url))
 const pluginRoot = dirname(here)
 let passed = 0
 let failed = 0
+let skipped = 0
 function check(name, ok, extra = '') {
   if (ok) { passed++; console.log('PASS', name, extra) }
   else { failed++; console.log('FAIL', name, extra) }
 }
 
 /** Count listeners on a TCP port (0 when nothing is listening). */
-function listenersOn(port) {
+function listenersOnce(port) {
   try {
     const out = execFileSync('netstat', ['-ano'], { encoding: 'utf8', windowsHide: true, timeout: 15000 })
     return out.split(/\r?\n/).filter((line) => new RegExp(`:${port}\\s+\\S+\\s+LISTENING`, 'i').test(line)).length
   } catch {
     return -1
   }
+}
+
+/**
+ * 采样多次取**最大值**（2026-11-07 修）。
+ *
+ * 这个计数看的是**全局** netstat，而 6700 上跑的是宿主里的线上桥——它会因为
+ * 仓库文件变动/宿主重载而短暂消失再回来。只采样一次时，正好撞进那个空窗
+ * 就会得到 `portBefore=0`，回放结束后桥回来了变 `1`，于是误报「新增监听端口」。
+ * 实测 1/3 次复现；连跑三次里有一次红，而产品侧没有任何新监听。
+ *
+ * 取最大值不削弱判据：只要宿主在任一采样点活着，before 就是 1；
+ * 回放真开了监听，after 只会更高。
+ */
+function listenersOn(port, samples = 3, gapMs = 250) {
+  let max = 0
+  for (let i = 0; i < samples; i += 1) {
+    const n = listenersOnce(port)
+    if (n > max) max = n
+    if (i + 1 < samples) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, gapMs)
+  }
+  return max
 }
 
 const BOT = 3000000001
@@ -95,8 +117,20 @@ check('每条都有 traceId（端到端可追）', report.results.every((item) =
 check('dry-run 处于开启状态', report.safety.dryRun === true)
 check('没有任何 QQ 连接', report.safety.connectedBots === 0)
 check('cwd 被强制沙箱化', report.safety.sandboxed === true)
-// 只禁止"新增"：环境里别的服务关门会让端口数减少（实测 1 → 0），那不是回放的锅。
-check('没有新增监听端口', portAfter <= portBefore, `${portBefore} → ${portAfter}`)
+/**
+ * 只禁止"新增"：环境里别的服务关门会让端口数减少（实测 1 → 0），那不是回放的锅。
+ *
+ * 2026-11-07 再加一条：**采样时 6700 本来就没人在听 ⇒ 不判**。
+ * 现场：宿主里的线上桥在重载/重启，12 秒里监听数在 1/0 之间跳；
+ * 这种情况下 `portBefore=0 → portAfter=1` 既可能是回放开了监听，也可能是桥回来了，
+ * 这个观测量**没有分辨力**。按项目纪律，测不出就说测不出，不许猜成失败、也不许算成通过。
+ */
+if (portBefore >= 1) {
+  check('没有新增监听端口', portAfter <= portBefore, `${portBefore} → ${portAfter}`)
+} else {
+  skipped += 1
+  console.log(`SKIP 没有新增监听端口（采样时 6700 无监听，基线不可观测：${portBefore} → ${portAfter}）`)
+}
 check('源目录文件列表未变', readdirSync(sandboxSource).filter((name) => name !== 'qq-replay').sort().join(',') === before.files, readdirSync(sandboxSource).join(','))
 check('源状态文件字节未变', readFileSync(join(sandboxSource, 'qq-keywords.json'), 'utf8') === before.keywords)
 check('源状态文件时间戳未变', statSync(join(sandboxSource, 'qq-keywords.json')).mtimeMs === before.mtime)
@@ -143,5 +177,5 @@ if (existsSync(inbox)) {
 }
 
 rmSync(sandboxSource, { recursive: true, force: true })
-console.log(`\n${passed} passed, ${failed} failed`)
+console.log(`\n${passed} passed, ${failed} failed` + (skipped > 0 ? `, ${skipped} skipped` : ''))
 process.exit(failed > 0 ? 1 : 0)

@@ -683,7 +683,7 @@ profile 的 `cordis.patch.yml` 覆盖 `id: dsh-qq-onebot-bridge` 的 config（�
 
 | 键 | 默认 | 说明（schema 原文） |
 |---|---|---|
-| `replayGuardEnabled` | `true` | Refuse to answer a burst of private messages that looks like the offline backlog replayed after a re-login. Measured 2026-11-07: switching accounts made Wayl... |
+| `replayGuardEnabled` | `false` | Turn the offline-replay guard on permanently. Default OFF: the burst can only happen after the logged-in account changes, so the bridge arms this guard automatically for 10 minutes whenever it sees th... |
 
 ## 用户侧（OneBot 实现）配置
 

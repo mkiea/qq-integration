@@ -140,7 +140,12 @@ const BASE = {
 }
 
 const server = new MockServer()
-const bridge = new QQBridge(makeCtx(), { ...Config({}), ...BASE, cwd: root }, server, { info() {}, warn() {}, error() {} })
+/**
+ * ⚠️ 压测**显式关掉**离线重放守卫：这个套件故意在几秒内灌几千条消息，
+ * 守卫会把它判成「登录后重放」而静默——那测的就不是吞吐了。
+ * 守卫本身由 replay-guard-unit 覆盖；真实用户不会 5 秒发 5000 条。
+ */
+const bridge = new QQBridge(makeCtx(), { ...Config({ replayGuardEnabled: false }), ...BASE, cwd: root }, server, { info() {}, warn() {}, error() {} })
 
 // 漏一个 unhandledRejection，Node 22 默认直接杀进程：表现是"跑一半没了"，不是"有一条失败"。
 process.on('uncaughtException', (error) => stats.fatal.push(`uncaught: ${error?.message ?? error}`))

@@ -168,13 +168,13 @@ check('凡 schema 里带 apiKey/baseUrl/provider/model 的开关都标了依赖'
  *   因为它依赖的东西和 `sttEnabled` 完全一样（DSH 自带的本地识别，免费离线），
  *   标成"要买服务"会误导人去申请密钥。
  */
-check('依赖分布合理（开箱即用与需准备兼有；总数 99 = 76 开关 + 14 数值 + 1 时段 + 4 名单 + 2 下拉 + 2 文本）',
+check('依赖分布合理（开箱即用与需准备兼有；总数 104 = 78 开关 + 16 数值 + 1 时段 + 5 名单 + 2 下拉 + 2 文本）',
   allRows.filter((entry) => entry.needs === '').length >= 5
   && allRows.filter((entry) => entry.needs !== '').length >= 20
-  && allRows.length === 99
-  && boolRows.length === 76 && numRows.length === 14
+  && allRows.length === 104
+  && boolRows.length === 78 && numRows.length === 16
   && allRows.filter((entry) => entry.type === 'times').length === 1
-  && allRows.filter((entry) => entry.type === 'list').length === 4
+  && allRows.filter((entry) => entry.type === 'list').length === 5
   && allRows.filter((entry) => entry.type === 'select').length === 2
   && allRows.filter((entry) => entry.type === 'text').length === 2,
   `开箱即用 ${allRows.filter((entry) => entry.needs === '').length} / 需准备 ${allRows.filter((entry) => entry.needs !== '').length} / 共 ${allRows.length}`)
@@ -1009,7 +1009,7 @@ check('★「AI账号与白名单」只放"谁能让它开口"（不放回复样
     const chat = PANEL_GROUPS.find((item) => item.id === 'chat')
     return group !== undefined && group.title === 'AI账号与白名单'
       // 准入门（群里只理被 @ 的 / 允许私聊 / 群内是否校验成员）和白名单是同一件事：谁能让它开口
-      && group.rows.map((row) => `${row.key}:${row.type}`).join(',') === 'botQq:number,allowAllChats:boolean,replyOnlyWhenMentioned:boolean,acceptPrivate:boolean,allowUsers:list,allowGroups:list,groupCheckMembers:boolean,adminUsers:list,allowBrowserOrigin:boolean'
+      && group.rows.map((row) => `${row.key}:${row.type}`).join(',') === 'botQq:number,botQqAllowed:list,allowAllChats:boolean,replyOnlyWhenMentioned:boolean,acceptPrivate:boolean,allowUsers:list,allowGroups:list,groupCheckMembers:boolean,adminUsers:list,allowBrowserOrigin:boolean'
       // 对话基础里不再留这两个开关（避免两处都能改、看着像重复）
       && !chat.rows.some((row) => row.key === 'replyOnlyWhenMentioned' || row.key === 'acceptPrivate')
       /**

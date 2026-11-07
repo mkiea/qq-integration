@@ -119,7 +119,8 @@ const BASE = {
 }
 
 const server = new MockServer()
-const bridge = new QQBridge(makeCtx(), { ...Config({}), ...BASE, cwd: root }, server, { info() {}, warn() {}, error() {} })
+/** ⚠️ 关掉离线重放守卫：这个套件是长跑压测，会连续灌消息，守卫会判成重放而静默。 */
+const bridge = new QQBridge(makeCtx(), { ...Config({ replayGuardEnabled: false }), ...BASE, cwd: root }, server, { info() {}, warn() {}, error() {} })
 process.on('uncaughtException', (error) => stats.fatal.push(`uncaught: ${error?.message ?? error}`))
 process.on('unhandledRejection', (error) => stats.fatal.push(`unhandled: ${error?.message ?? error}`))
 bridge.start()

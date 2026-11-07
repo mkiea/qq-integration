@@ -90,7 +90,8 @@ const BASE = {
 }
 
 const server = new MockServer()
-const bridge = new QQBridge(ctx, { ...Config({}), ...BASE, cwd: root }, server, { info() {}, warn() {}, error() {} })
+/** ⚠️ 关掉离线重放守卫：fuzz 会连续灌几十条畸形消息，守卫会判成重放而静默。 */
+const bridge = new QQBridge(ctx, { ...Config({ replayGuardEnabled: false }), ...BASE, cwd: root }, server, { info() {}, warn() {}, error() {} })
 process.on('uncaughtException', (error) => stats.fatal.push(`uncaught: ${error?.message ?? error}`))
 process.on('unhandledRejection', (error) => stats.fatal.push(`unhandled: ${error?.message ?? error}`))
 bridge.start()

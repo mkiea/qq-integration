@@ -14,8 +14,9 @@
  *
  * ★ 探针必须**轻**：`/api/status` 要跑 netstat + tasklist、还要探 13000，
  * 实测冷启动 1.6 秒。拿它当探针，超时一紧就会把「自己」判成「别人」。
- * 所以先打 `/api/ping`（只回 pid/build/stamp）；只有遇到**旧版本**（404）才回退
- * 到 `/api/status`，那时多等 3.5 秒是兼容旧包必须付的成本。
+ * 所以先打 `/api/ping`（只回 pid/build/stamp）；只有遇到**旧版本**（404 或 405，
+ * 后者是 server 对未知路由的兜底）才回退到 `/api/status`，那时多等 3.5 秒是兼容
+ * 旧包必须付的成本。
  *
  * 只连 127.0.0.1，不联网。
  */
@@ -89,8 +90,16 @@ export async function probeExistingConsole({
   if (ping.status === 401 || ping.status === 403) {
     return { kind: 'foreign-console', httpStatus: ping.status, url: panelUrl(numericPort, token) }
   }
-  if (ping.status === 404) {
-    // 旧版本控制台：没有 /api/ping。回退到 /api/status，慢一次但能认出来。
+  if (ping.status === 404 || ping.status === 405) {
+    /**
+     * 旧版本控制台：没有 `/api/ping`。回退到 `/api/status`，慢一次但能认出来。
+     *
+     * ⚠️ **405 也是「不认识这个路径」**：server 的兜底是
+     * `json(405, { reason: 'method not allowed' })` —— 所有 `if (method && path)`
+     * 都没匹配上时回的就是它，不是 404。2026-11-07 实测：一台 11-06 16:32 起的
+     * 控制台对 `GET /api/ping` 回 **405**，只判 404 就会把它误报成「别的程序」。
+     * 探测固定用 GET，所以 405 只可能意味着「没有这个 GET 路由」。
+     */
     const legacy = await requestJson(fetchImpl, `${base}/api/status?${auth}`, legacyTimeoutMs)
     if (legacy.status === 200 && legacy.body?.ok === true) {
       return {

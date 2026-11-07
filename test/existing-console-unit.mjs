@@ -70,6 +70,30 @@ async function fakeServer(handler) {
     paths.some((p) => p.startsWith('/api/ping?')) && paths.some((p) => p.startsWith('/api/status?')), paths.join(' → '))
 }
 
+{
+  /**
+   * **405 才是真机上遇到的形态**（2026-11-07）：server 所有 `if (method && path)`
+   * 都没匹配上时，兜底回的是 `405 method not allowed`，不是 404。
+   * 只判 404 ⇒ 把一台 11-06 起的旧控制台误报成「别的程序」。
+   */
+  const paths = []
+  const { port } = await fakeServer((req, res) => {
+    paths.push(req.url)
+    if (req.url.startsWith('/api/ping')) {
+      res.writeHead(405, { 'content-type': 'application/json' })
+      res.end(JSON.stringify({ ok: false, reason: 'method not allowed' }))
+      return
+    }
+    res.writeHead(200, { 'content-type': 'application/json' })
+    res.end(JSON.stringify({ ok: true, pid: 777, build: { stale: true, newerCount: 4 } }))
+  })
+  const probe = await probeExistingConsole({ port, token: 't' })
+  check('旧版本（ping 405）→ 也回退，认出自己', probe.kind === 'self' && probe.legacy === true, `${probe.kind}/${probe.httpStatus}`)
+  check('旧版本（405）带回 build.stale', probe.build?.stale === true, JSON.stringify(probe.build))
+  check('旧版本（405）仍先 ping 后 status',
+    paths[0]?.startsWith('/api/ping?') && paths.some((p) => p.startsWith('/api/status?')), paths.join(' → '))
+}
+
 // ------------------------------------------------ 2. token 不对 ⇒ 另一个控制台
 
 {

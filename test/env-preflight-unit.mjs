@@ -113,6 +113,21 @@ check('★dshBin 为空 ⇒ 判 FAIL（Waylay 起来了也没有宿主接消息�
 check('dshBin 的修法里点名 qq-control.json 的 dshBin 键',
   String(noBin.results.find((r) => r.id === 'dsh-bin')?.fix).includes('dshBin'))
 
+// ---------------------------------------------------------------- ②c PATH 前置
+// 2026-11-07 VM 实测：node 不在 PATH 时，dsh.cmd / npm.cmd 就在 node 旁边却找不到，
+// 启动器因此误报「DSH CLI 不可用」并拒绝启动。
+const calls = []
+const spyMachine = fakeMachine({ healthy: true })
+spyMachine.run = (command, args, opts) => {
+  calls.push({ command, opts })
+  const out = command === 'npm' ? 'C:/npm-global' : '0.2.2-rc.1'
+  return { ok: true, status: 0, out, err: '', error: '' }
+}
+probeEnvironment(spyMachine)
+check('★每条外部命令都带 pathPrepend（node 目录）',
+  calls.length >= 3 && calls.every((c) => typeof c.opts?.pathPrepend === 'string' && c.opts.pathPrepend !== ''),
+  calls.map((c) => `${c.command}:${c.opts?.pathPrepend ?? '-'}`).join(' | '))
+
 // ---------------------------------------------------------------- ③ 纯函数边界
 check('parseMinNode: >=24.9.0', parseMinNode('>=24.9.0') === '24.9.0')
 check('parseMinNode: 裸版本号', parseMinNode('24.9.0') === '24.9.0')

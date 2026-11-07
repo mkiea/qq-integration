@@ -1,5 +1,26 @@
 # 更新日志 / Changelog
 
+### v0.1.0-rc2（2026-11-07）— 修 rc1 安装时暴露的桌面快捷方式缺陷
+
+> **tag：`v0.1.0-rc2`**。**取代 `v0.1.0-rc1`**：rc1 的发行件里带着下面这个缺陷，请用 rc2。
+> 其余内容与 rc1 完全相同（`package.json` 仍为 `0.1.0`，版本号走 tag）。
+
+**缺陷（真机装 rc1 时暴露）**：`一键启动.bat` 传的是 `%~dp0`，**结尾带反斜杠**；
+`Shortcut.WorkingDirectory` 带尾斜杠时，WSH 的 `CreateShortcut` 直接抛
+`Illegal characters in path.` ⇒ `[2/3] Desktop shortcut` 打印 `SHORTCUT_FAIL=…`，
+桌面没有图标。**不阻断启动**（`[3/3]` 照常），所以只影响「桌面入口」这一件事。
+
+**修法**：`make-shortcut.ps1` 入口先 `$WorkDir.TrimEnd('\')`；`-TargetBat` 改为可选
+（不给就在 WorkDir 里找唯一的 `*.bat`，0 个或多个都明确报错），bat 因此只传
+`-WorkDir "%~dp0"` —— 顺带把中文文件名从 argv 里拿掉；`launcher-assets-unit` 加两条守卫
+（必须自己找 `*.bat`、必须先 TrimEnd 尾斜杠）。
+
+**同批还修了一条测试**：`replay-live` 的「没有新增监听端口」在宿主桥重载时会误报
+（全局 netstat 采到空窗 `0 → 1`）。现在采样 3 次取最大值；基线仍为 0 时记 `SKIPPED`
+并说明「不可观测」，**不判通过也不判失败**。
+
+**测试**：126 套件全绿 / 0 红 / 0 卡死，断言 **5,403**。
+
 ### v0.1.0-rc1（2026-11-07）— 首个候选发行版（Release Candidate）
 
 > **tag：`v0.1.0-rc1`**。这是**候选发行版，不是正式版**：`package.json` 的 `version` 仍写 `0.1.0`

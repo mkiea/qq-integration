@@ -14,7 +14,7 @@ import { createConnection } from 'node:net'
 import { basename, dirname, isAbsolute, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { PORT_LABELS, configWarnings } from './config.mjs'
-import { describeStatus, parseListenerPid, stopPlan, waylayLaunchCommand, waylayLogPath, waylayQrPath, WAYLAY_BAT_HINT } from '../../lib/waylay-launch.js'
+import { describeStatus, parseListenerPid, stopPlan, waylayLaunchCommand, waylayLaunchLogPaths, waylayLogPath, waylayQrPath, WAYLAY_BAT_HINT } from '../../lib/waylay-launch.js'
 // `lib/panel.js` 没有任何 import（纯函数模块），所以从这里取写入规则不会形成循环依赖。
 // 复用它的 `normalizeDataDir` / `upsertPatchValue` 是刻意的：**同一套规则只许有一份**，
 // 否则「面板里能填的值，控制台向导拒收」这类分裂迟早出现，而且两边都觉得自己是对的。
@@ -478,6 +478,29 @@ export function createSupervisor(config, deps = {}) {
   }
 
   /**
+   * 上次拉起注入器时留下的最后一条非空日志。
+   *
+   * 只在「13000 没监听」时读（正常运行时不需要，也不会去碰大文件）：
+   * 2026-11-07 VM 里控制台拉起 Waylay 失败，现场只有一个锁文件，没有任何输出，
+   * 只能靠人工手动跑 bat 才看出原因。这个函数把那句话摆到面板上。
+   *
+   * 顺序 err → out：注入器的真实报错通常在 stderr，stdout 多是 `<log>` 流水。
+   */
+  function lastWaylayLaunchLog() {
+    const paths = waylayLaunchLogPaths(config.waylayBat)
+    for (const file of [paths.err, paths.out]) {
+      if (!file) continue
+      try {
+        if (!existsSync(file)) continue
+        if (statSync(file).size > 256 * 1024) continue   // 日志被刷爆时别把面板拖死
+        const lines = String(readFileSync(file, 'utf8')).split(/\r?\n/).filter((line) => line.trim() !== '')
+        if (lines.length > 0) return { file, line: lines[lines.length - 1].trim().slice(0, 240) }
+      } catch { /* 读不到就试下一个 */ }
+    }
+    return { file: '', line: '' }
+  }
+
+  /**
    * 读桥落盘的宿主健康文件（qq-host-health.json，桥的每个回合结束都会更新）。
    * 文件不存在 = 桥从没跑过或老版本 —— 返回 null，指标条显示"无记录"，不算异常。
    */
@@ -766,6 +789,14 @@ export function createSupervisor(config, deps = {}) {
       base.text = config.waylayBat
         ? 'Waylay 未运行（13000 没有监听）'
         : `Waylay 未配置入口（waylayBat）：${WAYLAY_BAT_HINT}`
+      // 有启动日志就把最后一句带出来：否则「起不来」在界面上和「没点过」长得一样。
+      const evidence = lastWaylayLaunchLog()
+      if (evidence.line !== '') {
+        base.level = 'warn'
+        base.reason = evidence.line
+        base.launchLog = evidence.file
+        base.text += `；上次启动日志（${basename(evidence.file)}）：${evidence.line}`
+      }
       return base
     }
     const live = await doFetch(`http://127.0.0.1:${config.ports.waylay}/api/status`)
@@ -820,18 +851,31 @@ export function createSupervisor(config, deps = {}) {
       }
     }
     try {
+      /**
+       * ★ 必须带 outFile/errFile。
+       *
+       * `startDetached` 的默认 stdio 是三个 `ignore`，再叠加 `windowsHide`：
+       * bat 里任何 `pause` / 报错 / 找不到文件都**看不见、也留不下证据**。
+       * 2026-11-07 VM 实测就是这个后果——控制台点了「启动 Waylay」，
+       * 只有锁文件、13000 不监听，日志一个字节都没有；手动敲同一个 bat 立刻成功。
+       */
+      const launchLogs = waylayLaunchLogPaths(config.waylayBat)
       const { pid } = startDetached({
         command: command.file,
         args: command.args,
         cwd: command.cwd,
+        outFile: launchLogs.out,
+        errFile: launchLogs.err,
         spawnImpl,
       })
       writeWaylayLock(pid)
       return {
         ok: true,
         pid,
+        launchLog: launchLogs.out,
         reason: `已请求启动（QQ 号 ${config.waylayUin || '未指定'}）。注入器返回后 QQ 在后台继续跑，看不到窗口是正常的；`
-          + `登录二维码在 ${waylayQrPath(config.waylayBat) || '（未配置）'}，或直接开 http://127.0.0.1:${config.ports.waylay}/qrcode`,
+          + `登录二维码在 ${waylayQrPath(config.waylayBat) || '（未配置）'}，或直接开 http://127.0.0.1:${config.ports.waylay}/qrcode；`
+          + `启动日志：${launchLogs.out || '（未配置入口）'}`,
       }
     } catch (error) {
       return { ok: false, reason: `启动失败：${error.message}` }

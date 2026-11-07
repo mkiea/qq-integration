@@ -8,8 +8,9 @@ import { strict as assert } from 'node:assert'
 import { test } from 'node:test'
 import {
   detectWaylayBat, parseListenerPid, waylayLaunchCommand, stopPlan,
-  describeStatus, waylayLogPath, waylayQrPath, waylayRuntimeCandidates,
+  describeStatus, waylayLogPath, waylayQrPath, waylayRuntimeCandidates, waylayLaunchLogPaths,
   WAYLAY_PORT, WAYLAY_ENTRY_FILE, WAYLAY_LOG_FILE, WAYLAY_QR_FILE, WAYLAY_BAT_HINT,
+  WAYLAY_LAUNCH_OUT_FILE, WAYLAY_LAUNCH_ERR_FILE,
 } from '../lib/waylay-launch.js'
 
 // ---------------------------------------------------------------- detectWaylayBat
@@ -75,6 +76,14 @@ test('★ 干净机布局能被 detectWaylayBat 真正找到（不是只生成�
     extra: waylayRuntimeCandidates({ repo, cwd }),
   })
   assert.equal(norm(got), target, `发行版兄弟目录没被探测到：${got}`)
+})
+
+test('waylayLaunchLogPaths: 启动日志落在入口同目录（VM 静默失败后加的）', () => {
+  const norm = (p) => String(p).replace(/\\/g, '/')
+  const got = waylayLaunchLogPaths('C:/real-install/rin-inject/rin-waylay.bat')
+  assert.equal(norm(got.out), 'C:/real-install/rin-inject/' + WAYLAY_LAUNCH_OUT_FILE)
+  assert.equal(norm(got.err), 'C:/real-install/rin-inject/' + WAYLAY_LAUNCH_ERR_FILE)
+  assert.deepEqual(waylayLaunchLogPaths(''), { out: '', err: '' })
 })
 
 test('WAYLAY_BAT_HINT 不再把用户指向开发机的 _tmp 路径', () => {

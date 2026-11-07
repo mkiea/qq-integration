@@ -234,14 +234,19 @@ const lockExec = (command, args, options, callback) => {
   return done(null, '"node.exe","555","Console","1","1 K"\n', '')
 }
 let lockSpawns = 0
+let lockSpawnOptions = null
 const lockSup = createSupervisor(
   { ...config, cwd: dir, waylayBat: lockBat, waylayUin: '10001', logs: {} },
-  { exec: lockExec, spawnImpl: () => { lockSpawns += 1; return { pid: 9100 + lockSpawns, unref() {} } } }
+  { exec: lockExec, spawnImpl: (c, a, o) => { lockSpawns += 1; lockSpawnOptions = o; return { pid: 9100 + lockSpawns, unref() {} } } }
 )
 const firstLaunch = await lockSup.startWaylay()
 const secondLaunch = await lockSup.startWaylay()
 check('Waylay 单实例锁：首次启动成功并落锁',
   firstLaunch.ok === true && lockSpawns === 1 && existsSync(lockFile), JSON.stringify(firstLaunch))
+check('★启动 Waylay 时把 stdout/stderr 落到入口同目录（否则失败零证据）',
+  Array.isArray(lockSpawnOptions?.stdio) && lockSpawnOptions.stdio[1] !== 'ignore' && lockSpawnOptions.stdio[2] !== 'ignore'
+  && existsSync(join(lockDir, 'rin-launch-out.log')) && existsSync(join(lockDir, 'rin-launch-err.log')),
+  JSON.stringify(lockSpawnOptions?.stdio))
 check('Waylay 单实例锁：5 分钟内重复启动被拒（不会多开出 QQ）',
   secondLaunch.ok === false && secondLaunch.launching === true && secondLaunch.reason.includes('还没完成') && lockSpawns === 1,
   JSON.stringify(secondLaunch))
@@ -250,6 +255,16 @@ check('「停止 Waylay」连带清掉启动锁（等于放弃这次启动）',
   stopClears.ok === false && !existsSync(lockFile), JSON.stringify(stopClears))
 const thirdLaunch = await lockSup.startWaylay()
 check('锁清掉后可以重新启动', thirdLaunch.ok === true && lockSpawns === 2, JSON.stringify(thirdLaunch))
+
+// ★ 13000 没监听但有启动日志：必须把最后一句带出来（2026-11-07 VM：静默失败只有锁、没有日志提示）
+const logDir = join(dir, 'waylay-launchlog')
+mkdirSync(logDir, { recursive: true })
+const batWithLog = join(logDir, 'rin-waylay.bat')
+writeFileSync(batWithLog, '@echo off\r\n', 'utf8')
+writeFileSync(join(logDir, 'rin-launch-err.log'), "line one\r\n'QQ.exe' not found\r\n", 'utf8')
+const logStatus = await createSupervisor({ ...config, waylayBat: batWithLog, logs: {} }, { exec: lockExec }).waylayStatus()
+check('★13000 没监听时把上次启动日志的最后一行带出来（不再是静默失败）',
+  logStatus.level === 'warn' && logStatus.text.includes("'QQ.exe' not found"), logStatus.text)
 
 // 「刷新二维码」必须是真动作：打 Waylay 的 /api/refresh-qr（让它主动 requestQRCode），
 // 而不是重读 qrcode.png（用户原话：「刷新二维码其实不管用」）。

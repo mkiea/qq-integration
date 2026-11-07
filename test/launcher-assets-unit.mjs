@@ -50,8 +50,8 @@ check('bat 的 echo 行全部是 ASCII（中文全角标点会被 cmd 拆行）'
 // ④ 快捷方式那一步真的接在启动流程里，且用 %~f0 / %~dp0（不写死路径）
 check('bat 调用了 launcher\\make-shortcut.ps1',
   /launcher\\make-shortcut\.ps1/.test(batText), '')
-check('bat 把自身路径与所在目录传给快捷方式脚本（%~f0 / %~dp0）',
-  /-TargetBat\s+"%~f0"/.test(batText) && /-WorkDir\s+"%~dp0"/.test(batText), '')
+check('bat 只传目录（-WorkDir "%~dp0"），不让中文文件名过 argv',
+  /-WorkDir\s+"%~dp0"/.test(batText) && !/-TargetBat/.test(batText), '')
 
 if (existsSync(psPath)) {
   const psBytes = readFileSync(psPath)
@@ -66,6 +66,10 @@ if (existsSync(psPath)) {
     /Join-Path \$desktop \(\$Name \+ '\.lnk'\)/.test(psText), '')
   check('失败只报错不中断启动（不 exit 1 之前先写 SHORTCUT_FAIL）',
     /SHORTCUT_FAIL=/.test(psText), '')
+  check('★会自己从目录里找唯一的 *.bat（-TargetBat 可选，中文名不过 argv）',
+    /Get-ChildItem[^\n]*-Filter '\*\.bat'/.test(psText) && /\$TargetBat = ''/.test(psText), '')
+  check('★WorkDir 先 TrimEnd 去掉尾斜杠（带尾斜杠会让 CreateShortcut 抛 Illegal characters）',
+    /\$WorkDir = \$WorkDir\.TrimEnd\('\\'\)/.test(psText), '')
 
   // 图标：脚本同目录的 .ico，不写死 shell32.dll 索引（猜索引=显示成别的图案）
   const ico = join(REPO, 'launcher', 'qq-integration.ico')

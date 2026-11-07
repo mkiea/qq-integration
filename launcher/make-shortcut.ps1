@@ -30,7 +30,12 @@
 #>
 [CmdletBinding()]
 param(
-  [Parameter(Mandatory = $true)][string]$TargetBat,
+  # 可选：不给就在 -WorkDir 里找唯一的那个 *.bat。
+  # 为什么要这样（2026-11-07 真机安装踩到）：`.bat` 用 `%~f0` 传自身路径时，
+  # 中文文件名要经 cmd → powershell.exe 的参数传递，某些代码页下会被改写；
+  # 而 `%~dp0` 一定带结尾反斜杠，`WorkingDirectory` 带尾斜杠会让 WSH 的
+  # CreateShortcut 抛 `Illegal characters in path`（rc1 安装实测）。
+  [string]$TargetBat = '',
   [Parameter(Mandatory = $true)][string]$WorkDir,
   [string]$Name = 'QQ 集成接入'
 )
@@ -38,6 +43,14 @@ param(
 $ErrorActionPreference = 'Stop'
 
 try {
+  # 尾斜杠必须先去掉，见上面 param 里的注释。
+  $WorkDir = $WorkDir.TrimEnd('\')
+  if (-not $TargetBat) {
+    $found = @(Get-ChildItem -LiteralPath $WorkDir -Filter '*.bat' -File -ErrorAction SilentlyContinue)
+    if ($found.Count -eq 1) { $TargetBat = $found[0].FullName }
+    elseif ($found.Count -eq 0) { throw "工作目录里没有 .bat：$WorkDir" }
+    else { throw "工作目录里有 $($found.Count) 个 .bat，无法确定启动哪一个：$WorkDir" }
+  }
   if (-not (Test-Path -LiteralPath $TargetBat)) { throw "目标脚本不存在：$TargetBat" }
   if (-not (Test-Path -LiteralPath $WorkDir)) { throw "工作目录不存在：$WorkDir" }
 

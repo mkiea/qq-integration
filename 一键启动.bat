@@ -47,7 +47,9 @@ if errorlevel 1 (
 
 rem Desktop entry: created once, idempotent, never blocks startup on failure.
 echo [2/3] Desktop shortcut
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0launcher\make-shortcut.ps1" -TargetBat "%~f0" -WorkDir "%~dp0"
+rem Only pass the directory: the script finds the single *.bat itself, so no
+rem Chinese filename has to survive cmd -> powershell.exe argument passing.
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0launcher\make-shortcut.ps1" -WorkDir "%~dp0"
 
 echo [3/3] Starting console and the full chain: Waylay - DSH host - optional TTS
 echo       Keep this window open. Closing it does NOT stop the host.

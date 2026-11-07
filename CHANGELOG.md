@@ -1,5 +1,32 @@
 # 更新日志 / Changelog
 
+### 未发布 — 发行版本戳（2026-11-07）
+
+> **tag：尚未打**。这一节的代码**不在** `v0.1.0-rc2` 的发行件里（那个 zip 打于 14:53，
+> 早于这批改动）。要拿到带版本戳的包，需要下一次打包 + 打新 tag。
+
+**问题**：`package.json` 的 `version` 恒为 `0.1.0`，beta-4 / rc1 / rc2 只靠 git tag 区分；
+而发行包是 `git archive` 出来的，干净机上**没有 `.git`** ⇒ 用户装完说不出自己装的是哪一版，
+面板上也没有任何地方能看。做「要不要升级」的判断，连比较基准都没有。
+
+**做法**：
+
+- 新增 `lib/version-stamp.js`：只读 `RELEASE-MANIFEST.txt` 里带 `release-` 前缀的
+  `key=value` 行。**读不到就返回「无发行戳」**，绝不拿 `package.json` 的 `0.1.0` 冒充版本。
+  纯函数、不 spawn、不联网；返回值刻意不含绝对路径（它会原样进 `/api/status`）。
+- `_tmp/mkrelease.py` 生成清单时写入 `release-tag`（`git describe --tags --exact-match`）、
+  `release-commit`、`release-built-at`、`release-built-by`，并把 `rin-inject.zip` 的 sha256
+  从「前 16 位」升级为完整值 `requires-rin-inject-sha256=`。
+  同批两条护栏：工作区有未提交改动时打印 `WARN_DIRTY_TREE`（`git archive HEAD` 不含它们，
+  否则版本戳会替一份旧代码作证）；`lib/version-stamp.js` 进 `required` 清单。
+- 四处显示：启动器体检**首行**、`tools/doctor.mjs` 新增「发行版本戳」一项（`--json` 也带）、
+  控制台顶栏、`/api/status` 的 `stamp`（按 mtime 缓存 ⇒ 换包后下一次轮询即更新）。
+
+**降级行为**（开发副本 / npm 安装都走这条）：显示 `0.1.0（package.json，无发行戳）`；
+doctor 记 `WARN` 不记 `FAIL` —— 这不是坏掉，只是回答不了「要不要升级」。
+
+**测试**：`version-stamp-unit` 39 条断言；全量 **127 套件全绿 / 0 红 / 0 卡死，断言 5,442**。
+
 ### v0.1.0-rc2（2026-11-07）— 修 rc1 安装时暴露的桌面快捷方式缺陷
 
 > **tag：`v0.1.0-rc2`**。**取代 `v0.1.0-rc1`**：rc1 的发行件里带着下面这个缺陷，请用 rc2。

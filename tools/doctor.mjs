@@ -23,6 +23,7 @@ import { homedir } from 'node:os'
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 import { probeEnvironment } from '../lib/env-preflight.js'
+import { describeStamp, readVersionStamp } from '../lib/version-stamp.js'
 
 const HERE = dirname(fileURLToPath(import.meta.url))
 const REPO = resolve(HERE, '..')
@@ -144,6 +145,20 @@ async function checkInstall() {
     add('install', '包名', 'fail', `是 ${pkg.name}，应为 ${PLUGIN_NAME}`,
       '包名是宿主加载契约，不能改。你可能在改过的副本里跑这个脚本。')
   }
+
+  /**
+   * A2b 发行版本戳（2026-11-07）。
+   *
+   * `package.json` 的 `0.1.0` 是**包版本**，区分不了 beta-4 / rc1 / rc2；真正的版本
+   * 在发行包的 `RELEASE-MANIFEST.txt` 里。没有它只说「无发行戳」，不报 FAIL：
+   * 开发副本和 npm 安装本来就没有，这不是坏掉，只是回答不了「要不要升级」。
+   */
+  const stamp = readVersionStamp({ repo: REPO })
+  add('install', '发行版本戳', stamp.present ? 'ok' : 'warn',
+    `${describeStamp(stamp)}${stamp.builtAt ? ` · 打包于 ${stamp.builtAt}` : ''}`,
+    stamp.present
+      ? ''
+      : '这个副本没有 RELEASE-MANIFEST.txt（开发副本或 npm 安装）。要判断该不该升级，以发行包里的 tag 为准，别看 package.json 的 0.1.0。')
 
   // A3 直接依赖能加载（`ws`）
   try {

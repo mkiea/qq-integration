@@ -208,7 +208,7 @@
 <aside class="side">
   <div class="brand">
     <span class="logo">🐧</span>
-    <div><b>QQ 集成接入 · 控制台</b><span class="meta">独立进程 · 127.0.0.1:8880</span></div>
+    <div><b>QQ 集成接入 · 控制台</b><span class="meta" id="brandStamp">独立进程 · 127.0.0.1:8880</span></div>
   </div>
   <!--
     「进程比代码旧」的提示条（2026-11-01 夜）。默认隐藏，/api/status 的 build.stale 为真时才出现。
@@ -1387,6 +1387,28 @@ function paintMetrics(status, perf) {
     stale ? '进程比代码旧，需重启控制台' : (uiHot ? '界面已热重载' : '本页刚拉过'),
     stale ? 'warn' : '');
   host.classList.toggle('stale', stale);
+  renderBrandStamp(status?.stamp);
+}
+
+/**
+ * 顶栏的发行版本戳（2026-11-07）。
+ *
+ * 版本来自服务端读 `RELEASE-MANIFEST.txt` 的结果（`/api/status` 的 `stamp`）。
+ * 三条规矩：
+ *   · 老服务端没有 `stamp` 字段 ⇒ **什么都不改**（少一条信息好过显示错版本）；
+ *   · 没有发行戳 ⇒ 把「（无发行戳）」一起显示，别让 0.1.0 被读成最新版；
+ *   · 只显示 tag/commit，不显示文件路径（面板会被截图发出去）。
+ */
+function renderBrandStamp(stamp) {
+  const el = document.getElementById('brandStamp');
+  if (!el || !stamp) return;
+  const base = '独立进程 · 127.0.0.1:8880';
+  if (stamp.present === true) {
+    const ver = String(stamp.tag || stamp.commit || '');
+    el.textContent = ver ? base + ' · ' + ver : base;
+  } else if (stamp.packageVersion) {
+    el.textContent = base + ' · ' + stamp.packageVersion + '（无发行戳）';
+  }
 }
 
 async function refresh() {

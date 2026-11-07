@@ -15,7 +15,8 @@ import { createServer } from 'node:http'
 import { readFileSync, statSync } from 'node:fs'
 import { randomBytes } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
-import { dirname } from 'node:path'
+import { dirname, join } from 'node:path'
+import { MANIFEST_FILE, readVersionStamp } from '../../lib/version-stamp.js'
 import { tailLines } from './supervisor.mjs'
 import { detectStale } from './staleness.mjs'
 import { FREEABLE_PORTS, detectPaths } from './config.mjs'
@@ -24,6 +25,26 @@ import { buildScenario, listScenarios } from './scenarios.mjs'
 import { diffReplays } from './replaydiff.mjs'
 
 const MAX_BODY_BYTES = 64 * 1024
+const REPO_ROOT = fileURLToPath(new URL('../..', import.meta.url))
+
+/**
+ * 发行版本戳（2026-11-07）。
+ *
+ * 按 mtime 缓存：面板每几秒轮询一次 `/api/status`，没必要每次都读盘；
+ * 但升级覆盖了 `RELEASE-MANIFEST.txt` 之后 mtime 会变 ⇒ 下一次轮询立刻读到新版本。
+ * 这时页面显示的是「新版本号 + 旧进程」，正好由已有的 `build.stale` 提示条解释
+ * ——两条信息互补，不是重复。
+ */
+let stampCache = { at: -1, value: null }
+function currentStamp() {
+  const path = join(REPO_ROOT, MANIFEST_FILE)
+  let at = -1
+  try { at = statSync(path).mtimeMs } catch { at = -1 }
+  if (stampCache.value === null || stampCache.at !== at) {
+    stampCache = { at, value: readVersionStamp({ repo: REPO_ROOT }) }
+  }
+  return stampCache.value
+}
 const LOG_NAMES = ['hostOut', 'hostErr', 'bridge', 'trace', 'audit', 'runtime']
 const CONFIG_KEYS = ['cwd', 'dshBin', 'nodeExe', 'waylayBat', 'waylayUin', 'ttsBat']
 
@@ -221,7 +242,7 @@ export function createControlHandler({ config, token, api, ui = '', uiFile = '',
       }
 
       if (request.method === 'GET' && path === '/api/status') {
-        json(response, 200, { ok: true, ...(await api.status()), build: build() })
+        json(response, 200, { ok: true, ...(await api.status()), build: build(), stamp: currentStamp() })
         return
       }
       /**

@@ -11,6 +11,7 @@
 import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { probeEnvironment } from '../lib/env-preflight.js'
+import { describeStamp, readVersionStamp } from '../lib/version-stamp.js'
 import { loadControlConfig } from '../control/lib/config.mjs'
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..')
@@ -31,6 +32,9 @@ const { results, blockers, ok } = probeEnvironment({ repo: REPO, cwd: REPO, dshB
 
 console.log('')
 console.log('QQ 集成接入 · 启动前检查（只读，不装不改）')
+// 版本戳放在第一行：用户开窗口第一眼就该知道自己在跑哪一版。
+// 读不到时 describeStamp 会写「无发行戳」，不会拿 package.json 的 0.1.0 冒充。
+console.log(`版本：${describeStamp(readVersionStamp({ repo: REPO }))}`)
 console.log('────────────────────────────────────────────────────────')
 for (const item of results) {
   console.log(`${TAG[item.status] ?? '[?]   '}${item.name}${item.detail ? `  ${item.detail}` : ''}`)

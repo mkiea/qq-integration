@@ -200,6 +200,11 @@ dsh plugin --profile <profile> add <本目录>                # 注册进 profil
 3. `--start-all` 调同一个 `api.startAll()`：**Waylay → DSH 宿主 → 可选本地语音**，逐步打印结果。
    已在跑的项跳过；逻辑与面板「一键启动」完全一致（单实例锁、端口预检、停止护栏都还在）。
 
+**已经开着再双击一次会怎样**：启动器先用 `qq-control.json` 里的 token 探一下 8880 ——
+是自己就**只打开面板**然后退出（不再报「端口被占用」）；是另一个控制台或别的程序，
+才 `exit 2` 停下并打印占用者。判据是 `GET /api/ping`（旧版本没这个接口时自动回退
+`/api/status`），不靠 PID / 锁文件 —— 锁文件会残留，PID 会复用。
+
 手动分步（调试时用）：
 
 1. 双击 `control/启动控制台.bat`（或 `node control/bin/qq-control.mjs`）；

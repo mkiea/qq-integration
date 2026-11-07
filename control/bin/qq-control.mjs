@@ -17,6 +17,7 @@ import { createToken, createControlServer, readUi } from '../lib/server.mjs'
 import { loadControlConfig, saveControlConfig, PORT_LABELS, configWarnings } from '../lib/config.mjs'
 import { createSupervisor } from '../lib/supervisor.mjs'
 import { openPanel } from '../lib/open.mjs'
+import { probeExistingConsole, triggerStartAll } from '../lib/existing-console.mjs'
 
 const here = dirname(fileURLToPath(import.meta.url))
 const repoRoot = resolve(here, '..', '..')
@@ -70,9 +71,96 @@ const server = createControlServer({
   },
 })
 
-server.on('error', (error) => {
+/**
+ * 第二次双击的判断（2026-11-07）。
+ *
+ * 用户实际场景：控制台已经开着，又双击了一次「一键启动.bat」。
+ * 旧行为只有一句 `✖ 端口 8880 已被占用` —— 分不清「自己人」和「别人」，
+ * 看着像坏了。这里先用**自己的 token** 打一次 `/api/status`：
+ *   · 答 200 + ok:true ⇒ 是自己 ⇒ 直接开面板、退出 0（bat 不会 pause，窗口一闪即过）；
+ *   · 答 401/403 ⇒ 是另一个控制台（token 不同）⇒ 警告并说清是谁；
+ *   · 答别的 ⇒ 别的程序 ⇒ 警告 + 占用者；
+ *   · 连不上 ⇒ 没人，正常启动；
+ *   · 超时 ⇒ **判不了就照常启动**，不能拿一次超时当"端口被占"的证据。
+ */
+const existing = await probeExistingConsole({ port: config.ports.control, token: config.token })
+
+if (existing.kind === 'self') {
+  console.log('🐧 QQ 集成接入 · 控制台已经在运行（同一个实例）')
+  console.log(`   控制台：${existing.url}`)
+  if (existing.build?.stale === true) {
+    const newer = Number(existing.build.newerCount) || 0
+    console.log(`   ⚠️ 但它是旧进程（${newer} 个源文件比进程新）：页面上的新按钮会回「未知接口」。`)
+    console.log('      关掉那个控制台窗口，再双击「一键启动.bat」即可。')
+  }
+  if (wantsStartAll) {
+    // 复用已有实例的接口，而不是另起一份去拉：端口预检/单实例锁都在那个进程里。
+    console.log('   正在让已运行的控制台拉起全链路…')
+    const result = await triggerStartAll({ port: config.ports.control, token: config.token })
+    for (const step of result?.steps ?? []) {
+      const tag = step.ok ? '[OK]  ' : '[X]   '
+      console.log(`   ${tag}${step.name}${step.skipped ? '（跳过）' : ''}：${step.reason}`)
+    }
+    if (!Array.isArray(result?.steps)) {
+      console.log(`   ⚠️ 没拿到步骤结果：${result?.reason ?? '未知原因'}`)
+    }
+  }
+  if (wantsOpen) {
+    const opened = openPanel(existing.url)
+    console.log(opened.ok
+      ? `   已用${opened.mode === 'app' ? '应用窗口' : '默认浏览器'}打开控制面板`
+      : '   未能自动打开窗口，请手动访问上面的地址')
+  }
+  process.exit(0)
+}
+
+if (existing.kind === 'foreign-console' || existing.kind === 'other-service') {
+  const who = existing.kind === 'foreign-console'
+    ? '另一个控制台实例（token 不匹配）'
+    : '别的程序（端口上有 HTTP，但不是控制台接口）'
+  console.error(`✖ 控制台端口 ${config.ports.control} 被占用：${who}`)
+  const occupant = await occupantOf(api, config.ports.control)
+  if (occupant) console.error(`   占用者：${occupant}`)
+  console.error('   如果那是你自己开的旧控制台：关掉它的窗口再启动；')
+  console.error('   不想关就换端口：node control/bin/qq-control.mjs --port <其它端口>（只影响本次运行）')
+  process.exit(2)
+}
+
+if (existing.kind === 'unknown') {
+  // 「判不了」不等于「被占了」：照常启动，让 listen 自己给结论。
+  console.log(`   （端口 ${config.ports.control} 有响应但 1.2 秒内没答完，先按空闲处理）`)
+}
+
+/** 端口占用者：`node.exe#12345`。拿不到就返回空串，不编。 */
+async function occupantOf(supervisor, port) {
+  try {
+    const snapshot = await supervisor.status()
+    const row = (snapshot?.ports ?? []).find((item) => Number(item.port) === Number(port) && item.listening)
+    if (!row) return ''
+    return `${row.process || '进程名未知'}${row.pid ? `#${row.pid}` : ''}`
+  } catch {
+    return ''
+  }
+}
+
+server.on('error', async (error) => {
   if (error.code === 'EADDRINUSE') {
+    /**
+     * 探测与 listen 之间有竞态（两次双击几乎同时）。这里再认一次：
+     * 如果占着端口的确实是自己，就不该报错退出，直接开面板。
+     */
+    let again = { kind: 'unknown' }
+    try {
+      again = await probeExistingConsole({ port: config.ports.control, token: config.token })
+    } catch { /* 探测本身失败就按原样报错 */ }
+    if (again.kind === 'self') {
+      console.log('   端口在监听，而且就是本控制台（刚才的竞态），直接打开面板。')
+      if (wantsOpen) openPanel(again.url)
+      process.exit(0)
+    }
     console.error(`✖ 控制台端口 ${config.ports.control} 已被占用，请先释放或改用 --port <其它端口>`)
+    const occupant = await occupantOf(api, config.ports.control)
+    if (occupant) console.error(`   占用者：${occupant}`)
     process.exit(2)
   }
   console.error(`✖ 控制台启动失败：${error.message}`)

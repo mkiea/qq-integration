@@ -216,6 +216,19 @@ export function createControlHandler({ config, token, api, ui = '', uiFile = '',
     }
 
     try {
+      /**
+       * 轻量探针（2026-11-07）。
+       *
+       * 为什么不用 `/api/status`：它要跑 netstat + tasklist、还要探 13000，
+       * 实测**冷启动 1.6 秒**。而「这个端口上是不是我自己」只需要一次极快的应答；
+       * 探针重了，第二次双击启动器就会把「自己」误判成「别人」。
+       * 这里只回答「我还活着 + 我是谁」，不碰 supervisor。
+       */
+      if (request.method === 'GET' && path === '/api/ping') {
+        json(response, 200, { ok: true, pid: process.pid, startedAt, build: build(), stamp: currentStamp() })
+        return
+      }
+
       // ---- 首次配置向导：探测落点 + 读当前值（宿主无关）----
       if (request.method === 'GET' && path === '/api/setup/target') {
         const paths = detectPaths(config)

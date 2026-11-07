@@ -66,6 +66,20 @@ if (existsSync(psPath)) {
     /Join-Path \$desktop \(\$Name \+ '\.lnk'\)/.test(psText), '')
   check('失败只报错不中断启动（不 exit 1 之前先写 SHORTCUT_FAIL）',
     /SHORTCUT_FAIL=/.test(psText), '')
+
+  // 图标：脚本同目录的 .ico，不写死 shell32.dll 索引（猜索引=显示成别的图案）
+  const ico = join(REPO, 'launcher', 'qq-integration.ico')
+  check('launcher/qq-integration.ico 存在', existsSync(ico), ico)
+  if (existsSync(ico)) {
+    const ib = readFileSync(ico)
+    check('ico 头合法（00 00 01 00）', ib.subarray(0, 4).toString('hex') === '00000100')
+    const frames = ib.readUInt16LE(4)
+    check('ico 是多尺寸（>= 4 帧，16px 才不至于糊）', frames >= 4, `${frames} 帧`)
+  }
+  check('快捷方式用同目录 .ico（$PSScriptRoot，随包走）',
+    /\$PSScriptRoot/.test(psText) && /qq-integration\.ico/.test(psText), '')
+  check('读回来核对 IconLocation（不只看"设过了"）',
+    /ICON_OK=/.test(psText), '')
 }
 
 // 安装脚本也要接这一棒（否则只有手动双击 bat 的人才有桌面图标）

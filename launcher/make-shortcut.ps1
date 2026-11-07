@@ -52,6 +52,13 @@ try {
   $shortcut.WorkingDirectory = $WorkDir
   $shortcut.Description = 'QQ 集成接入 · 一键启动'
   $shortcut.WindowStyle = 1
+
+  # 图标：跟脚本同目录的 .ico（发行包里自带）。没有就退回目标文件默认图标，
+  # 不写死任何 shell32.dll 索引 —— 猜一个索引很容易显示成别的图案。
+  $icon = Join-Path $PSScriptRoot 'qq-integration.ico'
+  $hasIcon = Test-Path -LiteralPath $icon
+  if ($hasIcon) { $shortcut.IconLocation = "$icon,0" }
+
   $shortcut.Save()
 
   # 读回来核一次：CreateShortcut + Save 失败时不一定抛异常，只看"文件在不在"会假绿。
@@ -60,6 +67,8 @@ try {
   Write-Output ("EXISTS=" + (Test-Path -LiteralPath $lnk))
   Write-Output ("TARGET_OK=" + ($check.TargetPath -eq $TargetBat))
   Write-Output ("WORKDIR_OK=" + ($check.WorkingDirectory.TrimEnd('\') -eq $WorkDir.TrimEnd('\')))
+  Write-Output ("ICON=" + $check.IconLocation)
+  Write-Output ("ICON_OK=" + $(if ($hasIcon) { $check.IconLocation -eq ($icon + ',0') } else { 'n/a' }))
 } catch {
   Write-Output ("SHORTCUT_FAIL=" + $_.Exception.Message)
   exit 1

@@ -98,6 +98,32 @@ export function detectDshBin({ roots = [], readdir = readdirSync, exists = exist
 }
 
 /**
+ * 全局 / 便携安装的 DSH 入口候选（纯字符串，不碰磁盘）。
+ *
+ * 2026-11-07 VM 实测（`real-install-v5`）：预检六项全绿、`waylayBat` 也自动认到了，
+ * 但 `CONFIG_DSHBIN=` **是空的** ⇒ 控制台「启动宿主」会直接报「未配置 nodeExe / dshBin」。
+ * 根因是候选表里只有 npx 缓存和 DSH Desktop，没有「官方 zip 解压出来的便携 Node」——
+ * 那是干净机上最常见的一种装法：npm 的全局前缀就是 node 自己的目录。
+ *
+ * @param {{execPath?: string, env?: object}} opts execPath 可注入，便于单测不带真机路径
+ * @returns {string[]} 去重后的 bin.js 绝对路径候选
+ */
+export function dshBinCandidates({ execPath = process.execPath, env = process.env } = {}) {
+  const out = []
+  let nodeDir = ''
+  try { nodeDir = dirname(execPath) } catch { nodeDir = '' }
+  if (nodeDir) {
+    // Windows 便携版 / 官方 zip：<node>\node_modules\@deepseek-ai\dsh\lib\bin.js
+    out.push(join(nodeDir, 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'))
+    // npm 前缀在 <node>\..\lib 的布局（部分 nvm / 手动安装）
+    out.push(join(dirname(nodeDir), 'lib', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'))
+  }
+  // Windows 上 npm 的默认全局前缀（msi 安装 Node 时用这个）
+  if (env.APPDATA) out.push(join(env.APPDATA, 'npm', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'))
+  return [...new Set(out)]
+}
+
+/**
  * npx cache roots worth probing, derived from the ENVIRONMENT and the location of
  * the running node — never from a hardcoded absolute path (a published plugin must
  * not carry the author's `C:\Users\<name>` or `D:\...` layout).
@@ -176,6 +202,7 @@ export function detectPaths(config = {}, { env = process.env, exists = existsSyn
   const dshBin = firstExisting([
     config.dshBin,
     env.DSH_WEB_BIN,
+    ...dshBinCandidates({ env }),
     detectDshBin({ roots: npxCacheRoots({ env }), readdir, exists }),
     join(localAppData, 'Programs', 'DSH Desktop', 'resources', 'app.asar.unpacked', 'node_modules', '@deepseek-ai', 'dsh', 'lib', 'bin.js'),
   ])

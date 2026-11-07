@@ -33,7 +33,7 @@
 `RIN_MODE=waylay` 走的是 `waylay-src/index.js`。`6700` 是本插件自己监听的反向 WS 端口，
 不是「6700 的 NapCat」。
 
-## 2. 六个「不报错但装不上」的坑（本次补丁就是为它们加的闸）
+## 2. 七个「不报错但装不上」的坑（本次补丁就是为它们加的闸）
 
 ### ① Node 22 + DSH 0.2.2-rc.1 ⇒ CLI 静默退出
 【事实】`npm view @deepseek-ai/dsh@0.2.2-rc.1` 的 `package.json` 写着 `engines.node: ">=24.9.0"`。
@@ -87,6 +87,20 @@ Waylay 运行时作为**单独的发行件**随发行版提供（不塞进仓库
 
 【修法】发行版只带 217 B 的最小模板 `[]`；`scripts/install-windows.ps1` 与本文档给的是
 **占位数字**的最小片段，不写任何真实 QQ 号 / key / 绝对路径。
+
+### ⑦ 控制台找不到 `dshBin`（Waylay 起来了也没有宿主接消息）
+【事实】2026-11-07 用重建后的包复验：`PREFLIGHT_RC=0`（六项全绿）、
+`CONFIG_WAYLAYBAT=C:\Users\user\real-install-v6\rin-inject\rin-waylay.bat`（兄弟目录自动探测成立），
+但 **`CONFIG_DSHBIN=` 是空的**。控制台「启动宿主」因此会直接报「未配置 nodeExe / dshBin」。
+
+【真因】`control/lib/config.mjs` 的候选表只有 npx 缓存与 DSH Desktop，没有
+「官方 zip 解压出来的便携 Node」——`<node>\node_modules\@deepseek-ai\dsh\lib\bin.js`，
+而那是干净机上最常见的一种装法（npm 全局前缀就是 node 自己的目录）。
+
+【修法】新增纯函数 `dshBinCandidates({ execPath, env })`（`<node>\node_modules`、
+`<node>\..\lib\node_modules`、`%APPDATA%\npm\node_modules`），
+预检再加第 7 项「控制台能启动宿主（bin.js）」；启动器与 `tools/doctor.mjs` 都改走
+`loadControlConfig()`，先读 `qq-control.json` 再自动探测（手填过的机器不会被打回）。
 
 ## 3. 凭据最小化（本次真实做法）
 

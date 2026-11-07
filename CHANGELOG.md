@@ -18,7 +18,7 @@ Waylay / DSH 宿主 / 可选本地语音的结果。`--start-all` 调的是面�
 数据目录兄弟 / 开发机老布局，不写死盘符与用户名；`WAYLAY_BAT_HINT` 不再把用户指向 `_tmp`。
 
 **③ 干净机前置体检（`lib/env-preflight.js`）**
-六个不报错但装不上的坑做成一份量具，双击启动器与 `tools/doctor.mjs` 共用：
+七个不报错但装不上的坑做成一份量具，双击启动器与 `tools/doctor.mjs` 共用：
 `dsh --version` **零输出即 FAIL**（Node 22 + dsh 0.2.2-rc.1 会 exit 0 却什么都不做）、
 按已装 DSH 的 `engines.node` 判 Node 相容、pnpm、VC++ 运行库、QQNT、Waylay 运行时。
 `test/env-preflight-unit.mjs` 同时验「干净机必须 FAIL」与「修好后必须全绿」
@@ -28,9 +28,18 @@ Waylay / DSH 宿主 / 可选本地语音的结果。`--start-all` 调的是面�
 `scripts/install-windows.ps1`：Node 门槛改为从 `npm view @deepseek-ai/dsh@<ver> engines.node`
 取（默认 24.9.0 兜底并声明是实测值）；`dsh --version` 空输出直接停；显式装 pnpm 并验版本；
 `dsh plugin add` 后用 **`cordis.patch.yml` + profile `package.json` 的真实产物**验注册；
-最后跑同一份前置体检。README 表格、六个坑、启动顺序、残留的 6099/NapCat 表述同步更新；
+最后跑同一份前置体检。README 表格、七个坑、启动顺序、残留的 6099/NapCat 表述同步更新；
 `NOTICE.md` 说清「仓库不打包二进制 / 发行版单独带 Apache-2.0 运行时」两条边界；
 `sync-runtime` 与 `package.json.files` 纳入新文件。
+
+**⑤ VM 复验又抓到一个：`dshBin` 探测为空**
+在 Win11 干净目录 `real-install-v6` 解压重建后的包：`PREFLIGHT_RC=0`（六项全绿）、
+`CONFIG_WAYLAYBAT` 正确指到兄弟目录 `rin-inject\rin-waylay.bat`（②的目标达成），
+但 `CONFIG_DSHBIN=` **是空的** ⇒ 控制台「启动宿主」会报「未配置 nodeExe / dshBin」。
+真因：候选表只有 npx 缓存与 DSH Desktop，漏了便携 Node 的
+`<node>\node_modules\@deepseek-ai\dsh\lib\bin.js`。新增 `dshBinCandidates({execPath, env})`，
+预检加第 7 项「控制台能启动宿主（bin.js）」，启动器与 doctor 都改走 `loadControlConfig()`
+（先读 `qq-control.json`，手填过 `dshBin` 的机器不会被打回）。
 
 **🔴 仍未做完**：QQ 登录二维码未扫 ⇒ 真实消息全链路未验；VC++ 正式安装路径未在 VM 重验；
 正式版发行通道未打通。详见 `docs/CLEAN-INSTALL.md` 第 6 节。

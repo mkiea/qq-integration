@@ -114,7 +114,7 @@ dsh plugin --profile web add <本目录>
 | 模型（云端 key 或本地 Ollama） | 生成回复 | 能收不能回 |
 
 > **干净机请看 [`docs/CLEAN-INSTALL.md`](docs/CLEAN-INSTALL.md)**：2026-11-06 在 Win11 虚拟机真机从零
-> 下载 QQ / Node 24 / DSH 0.2.2-rc.1 / Waylay 并打通 3080→6700→13000 的完整记录，含六个「不报错但装不上」的坑。
+> 下载 QQ / Node 24 / DSH 0.2.2-rc.1 / Waylay 并打通 3080→6700→13000 的完整记录，含七个「不报错但装不上」的坑。
 > 一条命令先自查：`node launcher/preflight.mjs`（只读，与控制台「一键体检」同一份量具）。
 
 ### 1. 装依赖并注册插件
@@ -237,7 +237,7 @@ profile、哪个 profile 声明了本插件、在不在 `bundles` 里、patch �
 ⚠️ 它**只在该报错时报错**：`WARN` 不一定是故障（例如"控制台没在跑"就是正常的，
 控制台是按需启动的独立进程）。
 
-### 6. 从零安装最容易踩的六个坑
+### 6. 从零安装最容易踩的七个坑
 
 | 症状 | 真因 |
 |---|---|
@@ -245,6 +245,7 @@ profile、哪个 profile 声明了本插件、在不在 `bundles` 里、patch �
 | 「启动 Waylay」报找不到入口 | 运行时 `rin-inject\` 没放到插件目录旁边/内部（旧版只认开发机 `_tmp\rin-inject`，现已修）；也可在 `qq-control.json` 里填 `waylayBat` |
 | `dsh --version` 空输出、`plugin add` 说成功却没建文件 | Node 22 跑 DSH 0.2.2-rc.1（要求 ≥24.9.0）⇒ CLI 静默退出。**别把 `RC=0` 当成功**；`node launcher/preflight.mjs` 会直接判 FAIL |
 | 注入后 13000 一直不监听、QQ 进程闪一下就没 | 缺 VC++ 2015-2022 运行库（`MSVCP140.dll` / `VCRUNTIME140.dll`）；装官方 `vc_redist.x64.exe`，别用拷 DLL 侧加载当正式修法 |
+| 「启动宿主」报未配置 `nodeExe` / `dshBin` | 便携 Node 装 DSH 时入口在 `<node>\node_modules\@deepseek-ai\dsh\lib\bin.js`，旧候选表没有这一项（已修）；也可在 `qq-control.json` 里填 `dshBin` |
 | 点了好几次「一键启动」，开出好几个 QQ 互相顶号 | Waylay 在扫码阶段不监听 13000，端口判据看不见它；控制台有 5 分钟单实例锁，锁文件在入口同目录 |
 | 记忆是空的 / 找不到聊天记录 | `dataDir` 没配（用 cwd 了）或换过目录没搬旧数据 |
 | 面板里全是空数据 | 控制台按 `dataDir` 读日志；`dataDir` 改了而控制台配置没跟上，就会读到空 |

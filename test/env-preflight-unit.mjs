@@ -27,21 +27,21 @@ const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 /** 造一台可切换状态的假机器：所有 I/O 都走注入，不碰真实进程/磁盘。 */
 function fakeMachine({ healthy = false } = {}) {
   const env = {
-    USERPROFILE: 'C:/Users/tester',
-    SystemRoot: 'C:/Windows',
+    USERPROFILE: 'C:/Users/user',
+    SystemRoot: 'C:/fake-win',
     ProgramFiles: 'C:/Program Files',
     'ProgramFiles(x86)': 'C:/Program Files (x86)',
-    DSH_HOME: 'C:/Users/tester/.dsh',
+    DSH_HOME: 'C:/Users/user/.dsh',
   }
   const present = new Set()
   if (healthy) {
     for (const key of [
-      'C:/Users/tester/.dsh/profiles/web/cordis.patch.yml',
+      'C:/Users/user/.dsh/profiles/web/cordis.patch.yml',
       'C:/Program Files/Tencent/QQNT/QQ.exe',
       'C:/real-install/rin-inject',
       'C:/real-install/rin-inject/rin-waylay.bat',
     ]) present.add(norm(key))
-    for (const dll of VC_RUNTIME_DLLS) present.add(norm(`C:/Windows/System32/${dll}`))
+    for (const dll of VC_RUNTIME_DLLS) present.add(norm(`C:/fake-win/System32/${dll}`))
   }
   const run = (command, args) => {
     const key = `${command} ${(args ?? []).join(' ')}`
@@ -101,6 +101,17 @@ check('两台机器结果项数一致（不因状态不同而少报几项）',
   `${dirty.results.length} / ${healthy.results.length}`)
 check('每项都有 id / name / status / detail',
   healthy.results.every((r) => r.id && r.name && r.status && typeof r.detail === 'string'))
+
+// ---- ②b dshBin（控制台「启动宿主」用的入口；2026-11-07 VM 实测漏过一次）
+const withBin = probeEnvironment({ ...fakeMachine({ healthy: true }), dshBinPath: 'C:/real-install/rin-inject' })
+check('dshBin 有值且存在 ⇒ 多出第 7 项且通过',
+  withBin.results.length === 7 && withBin.results.find((r) => r.id === 'dsh-bin')?.status === 'ok' && withBin.ok === true,
+  `${withBin.results.length} 项`)
+const noBin = probeEnvironment({ ...fakeMachine({ healthy: true }), dshBinPath: '' })
+check('★dshBin 为空 ⇒ 判 FAIL（Waylay 起来了也没有宿主接消息）',
+  noBin.ok === false && noBin.results.find((r) => r.id === 'dsh-bin')?.status === 'fail')
+check('dshBin 的修法里点名 qq-control.json 的 dshBin 键',
+  String(noBin.results.find((r) => r.id === 'dsh-bin')?.fix).includes('dshBin'))
 
 // ---------------------------------------------------------------- ③ 纯函数边界
 check('parseMinNode: >=24.9.0', parseMinNode('>=24.9.0') === '24.9.0')

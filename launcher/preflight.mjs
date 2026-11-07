@@ -8,14 +8,26 @@
  *
  * 退出码：0 = 没有硬失败（可以有 WARN）；1 = 有硬失败（启动器应当停下）。
  */
-import { dirname, resolve } from 'node:path'
+import { dirname, join, resolve } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { probeEnvironment } from '../lib/env-preflight.js'
+import { loadControlConfig } from '../control/lib/config.mjs'
 
 const REPO = resolve(dirname(fileURLToPath(import.meta.url)), '..')
 const TAG = { ok: '[OK]  ', warn: '[!]   ', fail: '[X]   ', skip: '[-]   ' }
 
-const { results, blockers, ok } = probeEnvironment({ repo: REPO, cwd: REPO })
+/**
+ * `dshBin` 由控制台自己的探测算（`detectPaths`），这里只负责把它塞进体检清单。
+ * 2026-11-07 VM 实测漏过一次：Waylay 认到了、dshBin 却是空，控制台「启动宿主」直接失败。
+ */
+let dshBin = null
+try {
+  // 走 loadControlConfig：先读 qq-control.json（用户的显式配置），没有再自动探测。
+  // 只用 detectPaths 会漏掉「装在非常规位置、已经手填过 dshBin」的那批机器。
+  dshBin = String(loadControlConfig(join(REPO, 'qq-control.json')).config.dshBin ?? '')
+} catch { dshBin = '' }
+
+const { results, blockers, ok } = probeEnvironment({ repo: REPO, cwd: REPO, dshBinPath: dshBin })
 
 console.log('')
 console.log('QQ 集成接入 · 启动前检查（只读，不装不改）')

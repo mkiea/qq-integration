@@ -9,7 +9,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, w
 import { tmpdir } from 'node:os'
 import { dirname, join } from 'node:path'
 import { fileURLToPath } from 'node:url'
-import { DEFAULT_PORTS, PORT_LABELS, configWarnings, detectDshBin, detectPaths, loadControlConfig, saveControlConfig } from '../control/lib/config.mjs'
+import { DEFAULT_PORTS, PORT_LABELS, configWarnings, detectDshBin, detectPaths, dshBinCandidates, loadControlConfig, saveControlConfig } from '../control/lib/config.mjs'
 import {
   QR_STALE_SECONDS, assertKillAllowed, createSupervisor, extractHostUrl, inspect,
   killTree, parseNetstat, portOf, publicConfig, qrStatus, run, startDetached, summarizePorts, tailLines,
@@ -117,6 +117,19 @@ const detected = detectDshBin({
 })
 check('npx 缓存探测返回候选 bin.js', detected.includes('@deepseek-ai') && detected.includes('bin.js'), detected)
 check('npx 缓存为空时返回空串', detectDshBin({ roots: [], readdir: () => [], exists: () => false }) === '')
+
+// 2026-11-07 VM 实测：便携 Node 装 DSH 时 dshBin 探测为空 ⇒ 控制台启动宿主直接失败。
+const portable = dshBinCandidates({
+  execPath: 'C:/real-install/node24/node.exe',
+  env: { APPDATA: 'C:/Users/user/AppData/Roaming' },
+}).map((p) => p.replace(/\\/g, '/'))
+check('★便携 Node：<node>/node_modules 下的 bin.js 是候选',
+  portable.includes('C:/real-install/node24/node_modules/@deepseek-ai/dsh/lib/bin.js'), portable.join(' | '))
+check('npm 默认全局前缀（%APPDATA%\\npm）也是候选',
+  portable.includes('C:/Users/user/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/lib/bin.js'))
+check('候选取自入参，不带作者本机用户名/盘符',
+  portable.every((p) => !p.includes('SolimPurmiss')))
+check('候选去重', new Set(portable).size === portable.length)
 
 const warnings = configWarnings({ ports: { control: 8880 }, nodeExe: process.execPath, dshBin: 'C:/nope/bin.js', waylayBat: '', cwd: '' })
 check('配置提醒：缺 dsh bin / waylay 入口 / cwd', warnings.some((w) => w.includes('dsh bin.js')) && warnings.some((w) => w.includes('Waylay 入口')) && warnings.some((w) => w.includes('工作目录')), warnings.join(' | '))

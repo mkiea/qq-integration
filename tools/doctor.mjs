@@ -126,7 +126,13 @@ async function checkInstall() {
    * 它 exit 0、零输出，`dsh plugin add` 也 exit 0、零输出、profile 一个文件都不建。
    * 只看退出码的安装脚本会把这判成成功——本项目已经吃过这个亏。
    */
-  for (const item of probeEnvironment({ repo: REPO, cwd: REPO }).results) {
+  let dshBinDetected = null
+  try {
+    // 与启动器/控制台同一份来源：先读 qq-control.json，再自动探测。
+    const mod = await import(pathToFileURL(join(REPO, 'control', 'lib', 'config.mjs')).href)
+    dshBinDetected = String(mod.loadControlConfig(join(REPO, 'qq-control.json')).config?.dshBin ?? '')
+  } catch { dshBinDetected = '' }
+  for (const item of probeEnvironment({ repo: REPO, cwd: REPO, dshBinPath: dshBinDetected }).results) {
     add('install', `干净机 · ${item.name}`, item.status, item.detail, item.fix)
   }
 

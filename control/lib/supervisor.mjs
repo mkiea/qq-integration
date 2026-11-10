@@ -817,6 +817,12 @@ export function createSupervisor(config, deps = {}) {
       ...base,
       live: box,
       loggedIn: box.logged_in === true,
+      /**
+       * 登录失败原因（2026-11-10）：Waylay 侧在 onLoginFailed / 快速登录失败时写，
+       * 形如 { code: 168, message: "账号近期存在安全风险…", account, at }。
+       * 没有失败过 / 已登录时为 null。体检与面板据此区分「没登录」和「被风控」。
+       */
+      loginError: box.login_error ?? null,
       uptimeSec: Number.isFinite(Number(box.uptime_sec)) ? Number(box.uptime_sec) : null,
       uin: String(box.uin ?? ''),
       nickname: String(box.nickname ?? ''),
@@ -1151,11 +1157,19 @@ export function createSupervisor(config, deps = {}) {
     if (!force && diagnoseCache && nowMs - diagnoseCache.at < 5000) return diagnoseCache.value
     const snapshot = await inspectNow()
     const events = traceEvents({ limit: 400 })
+    /**
+     * 2026-11-10：把 Waylay 的登录态一起喂给体检。
+     * 以前体检只看端口和 TCP，登录态失效时会全绿（真机踩过），
+     * 现在 qq-login 这一项会明确写出「被风控 168」或「未登录」。
+     */
+    let waylayState = null
+    try { waylayState = await waylayStatus() } catch { waylayState = null }
     const report = runDiagnose({
       config: { ...config, auditLog: config.logs?.audit ?? '' },
       snapshot,
       runtime: runtime(),
       events,
+      waylay: waylayState,
       now: now(),
       files: deps,
     })

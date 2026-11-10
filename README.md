@@ -685,6 +685,38 @@ profile 的 `cordis.patch.yml` 覆盖 `id: dsh-qq-onebot-bridge` 的 config（�
 |---|---|---|
 | `replayGuardEnabled` | `false` | Turn the offline-replay guard on permanently. Default OFF: the burst can only happen after the logged-in account changes, so the bridge arms this guard automatically for 10 minutes whenever it sees th... |
 
+
+### 完整配置参考（自动生成，2026-11-05）
+
+> 上表只放"日常会动"的项。**这一节是 schema 里的全部剩余项**，默认值从代码读，
+> 说明保留 schema 原文（英文）—— 不做机器翻译，避免翻出"看着通顺但含义漂移"的中文。
+>
+> 由 `tools/gen-config-reference.mjs` 生成；改 schema 后重跑即可，别手改这一节。
+> 示例里的号码一律用占位（`100000001` / `2000000001`），与真实账号无关。
+
+#### 语音（TTS / STT 补充）（3 项）
+
+| 键 | 默认 | 说明（schema 原文） |
+|---|---|---|
+| `ttsExpressiveness` | `true` | Adjust rate/pitch by sentence type (question / exclamation / trailing / short) with a small random jitter, so every voice message is not delivered at exactly... |
+| `ttsRate` | `` | Fixed speech-rate override, e.g. +2% or -4%. Empty = derive from the sentence type when ttsExpressiveness is on. Only effective on providers that accept a ra... |
+| `ttsPitch` | `` | Fixed pitch override, e.g. +2Hz or -2Hz. Empty = derive from the sentence type when ttsExpressiveness is on. Only effective on providers that accept a pitch ... |
+
+
+### 完整配置参考（自动生成，2026-11-05）
+
+> 上表只放"日常会动"的项。**这一节是 schema 里的全部剩余项**，默认值从代码读，
+> 说明保留 schema 原文（英文）—— 不做机器翻译，避免翻出"看着通顺但含义漂移"的中文。
+>
+> 由 `tools/gen-config-reference.mjs` 生成；改 schema 后重跑即可，别手改这一节。
+> 示例里的号码一律用占位（`100000001` / `2000000001`），与真实账号无关。
+
+#### 其他（内部 / 实验性）（1 项）
+
+| 键 | 默认 | 说明（schema 原文） |
+|---|---|---|
+| `sendJitterRatio` | `0.5` | Random extra gap added on top of sendIntervalMs, as a ratio of it (default 0.5 = each gap is 400-600ms instead of exactly 400ms). Fixed-interval writing is t... |
+
 ## 用户侧（OneBot 实现）配置
 
 以 NapCat 为例：OneBot11 配置里把 WebSocket 客户端地址填成：

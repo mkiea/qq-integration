@@ -117,5 +117,24 @@ const gaps = (list) => list.slice(1).map((row, index) => row.at - list[index].at
     `span=${total}ms gaps=${JSON.stringify(gaps(arrivals))}`)
 }
 
+// ---------- E. 抖动：间隔不是固定节拍（2026-11-10） ----------
+{
+  /**
+   * 为什么单独测：风控侧最容易识别的不是"发得多"，是"每次都一样"。
+   * 固定 400ms 的间隔在日志里就是一条直线，这一条锁住"没有两次一样"。
+   */
+  const arrivals = await scenario({ sendIntervalMs: 120, sendJitterRatio: 0.8 }, (server, socket) => [
+    ...Array.from({ length: 6 }, (_, i) => server.sendText(socket, 'group', 2002, String(i))),
+  ])
+  const g = gaps(arrivals)
+  const min = Math.min(...g)
+  const max = Math.max(...g)
+  const buckets = new Set(g.map((ms) => Math.round(ms / 5)))
+  check('E 抖动：6 条消息都发出去', arrivals.length === 6, `n=${arrivals.length}`)
+  check('E 抖动：间隔不全一样（不是定时任务）', buckets.size >= 3, `gaps=${JSON.stringify(g)}`)
+  check('E 抖动：下界仍受 sendIntervalMs 约束', min >= 110, `min=${min}ms`)
+  check('E 抖动：上界不超过 gap×1.8（含定时器容差）', max <= 120 * 1.8 + 40, `max=${max}ms`)
+}
+
 console.log(`\n${passed} passed, ${failed} failed`)
 if (failed > 0) process.exitCode = 1

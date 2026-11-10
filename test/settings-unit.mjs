@@ -167,16 +167,22 @@ check('凡 schema 里带 apiKey/baseUrl/provider/model 的开关都标了依赖'
  *   "为什么她回得慢了"必须有地方可查、可关。`needs` 标的是「需配置」而不是「需自备服务」，
  *   因为它依赖的东西和 `sttEnabled` 完全一样（DSH 自带的本地识别，免费离线），
  *   标成"要买服务"会误导人去申请密钥。
+ * 2026-11-08：+3 行 —— `ttsExpressiveness`（布尔，按语气自动调 rate/pitch）
+ *   + `ttsRate` / `ttsPitch`（文本，手填覆盖自动值），总数 104 → **107**、
+ *   开关 78 → 79、文本 2 → 4。
+ *   起因：语音被评「助手腔」。文献（ChinaMM 2026）说 TTS 缺显式约束时会「回归均值」，
+ *   而 edge-tts 官方又移除了自定义 SSML，只剩 rate/pitch/volume 三个整段标量 ——
+ *   这两个文本项就是当前链路上唯一能施加的「显式约束」；默认自动、可关、可手填固定。
  */
-check('依赖分布合理（开箱即用与需准备兼有；总数 104 = 78 开关 + 16 数值 + 1 时段 + 5 名单 + 2 下拉 + 2 文本）',
+check('依赖分布合理（开箱即用与需准备兼有；总数 107 = 79 开关 + 16 数值 + 1 时段 + 5 名单 + 2 下拉 + 4 文本）',
   allRows.filter((entry) => entry.needs === '').length >= 5
   && allRows.filter((entry) => entry.needs !== '').length >= 20
-  && allRows.length === 104
-  && boolRows.length === 78 && numRows.length === 16
+  && allRows.length === 107
+  && boolRows.length === 79 && numRows.length === 16
   && allRows.filter((entry) => entry.type === 'times').length === 1
   && allRows.filter((entry) => entry.type === 'list').length === 5
   && allRows.filter((entry) => entry.type === 'select').length === 2
-  && allRows.filter((entry) => entry.type === 'text').length === 2,
+  && allRows.filter((entry) => entry.type === 'text').length === 4,
   `开箱即用 ${allRows.filter((entry) => entry.needs === '').length} / 需准备 ${allRows.filter((entry) => entry.needs !== '').length} / 共 ${allRows.length}`)
 check('生图/语音这些"要装东西"的功能，说明里点明了需要什么',
   ['imageGenEnabled', 'ttsEnabled'].every((key) => {

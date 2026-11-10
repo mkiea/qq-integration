@@ -22,7 +22,7 @@ export const FRESH_WINDOW_MS = 15 * MINUTE
  * @param events    recent trace events
  * @param files     { exists, stat, readFile } injectables for tests
  */
-export function runDiagnose({ config, snapshot, runtime, events = [], now = Date.now(), files = {} } = {}) {
+export function runDiagnose({ config, snapshot, runtime, events = [], waylay = null, now = Date.now(), files = {} } = {}) {
   const exists = files.exists ?? existsSync
   const readFile = files.readFile ?? ((file) => readFileSync(file, 'utf8'))
   const stat = files.stat ?? statSync
@@ -54,12 +54,52 @@ export function runDiagnose({ config, snapshot, runtime, events = [], now = Date
   // 现在插件会写它（QQ 侧的 bot_online/bot_offline 通知），并且这里补上"未知就回落到 TCP 连接数"。
   const accountOnline = typeof snapshot?.botOnline === 'boolean' ? snapshot.botOnline : null
   const established = onebot?.established ?? 0
-  const botConnected = accountOnline === false ? false : (accountOnline === true || established > 0)
+  /**
+   * 2026-11-10：Waylay 说「没登录」时，6700 的连接不能算「在线」。
+   *
+   * 真机踩过：登录态失效后 TCP 还挂着（111.206.149.168:8080 + 6700 ESTABLISHED），
+   * 旧逻辑三项体检全绿，实际一条消息都收不到。登录态是比 TCP 更强的前置条件。
+   */
+  const waylayLoggedOut = Boolean(waylay && waylay.listening === true && waylay.loggedIn === false)
+  const botConnected = waylayLoggedOut
+    ? false
+    : (accountOnline === false ? false : (accountOnline === true || established > 0))
   checks.push(item('bot-online', '机器人已连上桥（6700 有连接）', botConnected,
-    accountOnline === false
-      ? `QQ 侧报了 bot_offline（${established} 条连接）`
-      : botConnected ? `${established} 条连接${accountOnline === true ? '，且 QQ 侧报了 bot_online' : ''}` : '无 ESTABLISHED 连接',
+    waylayLoggedOut
+      ? `Waylay 在跑但未登录（${established} 条连接是假的）`
+      : accountOnline === false
+        ? `QQ 侧报了 bot_offline（${established} 条连接）`
+        : botConnected ? `${established} 条连接${accountOnline === true ? '，且 QQ 侧报了 bot_online' : ''}` : '无 ESTABLISHED 连接',
     'Waylay 未启动/未登录时不会连过来：检查 QQ 是否在线、Waylay 是否已登录'))
+
+  /**
+   * QQ 登录态（2026-11-10）。和上面那条分开：
+   * 「连上了」说的是 TCP，「登录了」说的是身份。风控时前者成立、后者不成立，
+   * 而用户看到的现象是「她不说话」——必须有一项单独把原因写出来。
+   */
+  if (waylay && waylay.listening === true) {
+    const loggedIn = waylay.loggedIn === true
+    const err = waylay.loginError || null
+    const code = Number(err?.code || 0)
+    if (loggedIn) {
+      checks.push(item('qq-login', 'QQ 登录态', true,
+        `已登录 ${[waylay.uin, waylay.nickname].filter(Boolean).join(' / ')}`.trim()))
+    } else if (code === 168) {
+      checks.push(item('qq-login', 'QQ 登录态', false,
+        `账号被风控（168）：${err?.message || '账号近期存在安全风险，部分功能使用受限'}`,
+        '去手机 QQ → 设置 → 账号安全 处理完再扫；风控期间反复扫码会被拒得更久，处理前别一直点刷新', 'error'))
+    } else if (err) {
+      checks.push(item('qq-login', 'QQ 登录态', false,
+        `未登录：${err.message || `错误码 ${code}`}`,
+        '在控制台点「刷新二维码」重新扫码；反复失败就看 Waylay 日志里的 login_error', 'error'))
+    } else {
+      checks.push(item('qq-login', 'QQ 登录态', false, 'Waylay 在跑，但还没登录（可能正在等扫码）',
+        '打开控制台的二维码页扫码；或点「刷新二维码」', 'warn'))
+    }
+  } else if (waylay && waylay.listening === false) {
+    checks.push(item('qq-login', 'QQ 登录态', false, 'Waylay 未运行（13000 没监听）',
+      '点控制台的「启动 Waylay」；启动后若停在扫码，按提示扫', 'warn'))
+  }
   const bridgeSeen = events.some((event) => now - event.ts < FRESH_WINDOW_MS)
   checks.push(item('bridge-alive', '桥在最近 15 分钟内产生过事件', bridgeSeen,
     bridgeSeen ? `最近事件 ${Math.round((now - Math.max(...events.map((event) => event.ts))) / 1000)}s 前` : 'trace 文件里没有近期事件',

@@ -1,5 +1,5 @@
 /** Unit tests for TTS helpers (no network). */
-import { buildAzureSsml, buildLocalTtsRequest } from '../lib/tts.js'
+import { buildAzureSsml, buildLocalTtsRequest, normalizeSpeechText, pickProsody } from '../lib/tts.js'
 
 let passed = 0
 let failed = 0
@@ -28,6 +28,33 @@ check('local 请求透传文本', local.text === '你好呀')
 
 const localDefaults = buildLocalTtsRequest({}, '测试')
 check('local 缺省值兜底', localDefaults.ref_audio_path === '' && localDefaults.text_lang === 'zh' && localDefaults.media_type === 'wav')
+
+// 朗读文本规范化（2026-11-08）：去 markdown、换行当句读、补句末、按句截断
+const norm1 = normalizeSpeechText('**重点**：`code`\n第二行')
+check('规范化：去 markdown 标记', norm1 === '重点：code。第二行。', norm1)
+check('规范化：换行变句号、不重复加句号', normalizeSpeechText('你好。') === '你好。', normalizeSpeechText('你好。'))
+check('规范化：空文本返回空', normalizeSpeechText('   ') === '', JSON.stringify(normalizeSpeechText('   ')))
+const normCut = normalizeSpeechText('第一句话。第二句话很长很长。', { maxChars: 12 })
+check('规范化：按句截断，不切在词中间', normCut === '第一句话。', normCut)
+check('规范化：没有句末标点时补句号', normalizeSpeechText('就这样吧') === '就这样吧。', normalizeSpeechText('就这样吧'))
+
+// 语气 → rate/pitch（2026-11-08）。固定 rng=0.5 ⇒ 抖动项为 0，只测基础映射。
+const pr = (text, jitter = true) => pickProsody(text, { rng: () => 0.5, jitter })
+const q = pr('你好吗？')
+check('语气：疑问句抬起、略快', q.mood === 'question' && q.rate === '+2%' && q.pitch === '+2Hz', JSON.stringify(q))
+const ex = pr('太好了！')
+check('语气：感叹句更快更高', ex.mood === 'exclaim' && ex.rate === '+4%' && ex.pitch === '+3Hz', JSON.stringify(ex))
+const tr = pr('我……')
+check('语气：拖长放慢压低', tr.mood === 'trail' && tr.rate === '-3%' && tr.pitch === '-1Hz', JSON.stringify(tr))
+const sh = pr('嗯。')
+check('语气：超短句放慢', sh.mood === 'short' && sh.rate === '-2%' && sh.pitch === '+0Hz', JSON.stringify(sh))
+const pl = pr('今天天气不错。')
+check('语气：陈述句不额外偏移', pl.mood === 'plain' && pl.rate === '+0%' && pl.pitch === '+0Hz', JSON.stringify(pl))
+check('语气：格式符合 edge-tts 校验', [q, ex, tr, sh, pl].every((p) => /^[+-]\d+%$/.test(p.rate) && /^[+-]\d+Hz$/.test(p.pitch)),
+  JSON.stringify([q, ex, tr, sh, pl]))
+check('语气：jitter=false 时完全确定', pr('你好吗？', false).rate === '+2%' && pr('你好吗？', false).pitch === '+2Hz')
+const lo = pickProsody('你好吗？', { rng: () => 0, jitter: true })
+check('语气：抖动下限仍然合法', /^[+-]\d+%$/.test(lo.rate) && /^[+-]\d+Hz$/.test(lo.pitch), JSON.stringify(lo))
 
 console.log(`\n${passed} passed, ${failed} failed`)
 process.exit(failed > 0 ? 1 : 0)
